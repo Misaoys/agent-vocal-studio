@@ -6,7 +6,7 @@
 
 A local Windows editor for vocal sequencing, multitrack arrangement, and mixing. An MCP client can inspect, preview, and edit the same project that is open on the desktop.
 
-[![Windows 下载](https://img.shields.io/badge/Windows-下载-287CEE?style=flat-square)](https://github.com/Misaoys/agent-vocal-studio/releases/latest) [![MCP stdio](https://img.shields.io/badge/MCP-stdio-6C56CF?style=flat-square)](#mcp-接入) [![MIT License](https://img.shields.io/badge/License-MIT-3A936B?style=flat-square)](LICENSE)
+[![Windows x64 下载 v0.99.2](https://img.shields.io/badge/Windows_x64-v0.99.2-287CEE?style=flat-square)](https://github.com/Misaoys/agent-vocal-studio/releases/download/v0.99.2/Agent-Vocal-Studio-0.99.2-Windows-x64.zip) [![MCP stdio](https://img.shields.io/badge/MCP-stdio-6C56CF?style=flat-square)](#mcp-接入) [![MIT License](https://img.shields.io/badge/License-MIT-3A936B?style=flat-square)](LICENSE)
 
 ## MCP 接入
 
@@ -50,19 +50,30 @@ codex mcp get agent_vocal_studio
 
 ## 安装与启动
 
-1. 从 [GitHub Releases](https://github.com/Misaoys/agent-vocal-studio/releases/latest) 下载 `Agent-Vocal-Studio-0.99.0-Windows-x64.zip`，完整解压到可写目录。
+1. [下载 v0.99.2 Windows x64 ZIP](https://github.com/Misaoys/agent-vocal-studio/releases/download/v0.99.2/Agent-Vocal-Studio-0.99.2-Windows-x64.zip) 并完整解压到可写目录。 [查看发布说明和 SHA-256](https://github.com/Misaoys/agent-vocal-studio/releases/tag/v0.99.2)
 2. 双击 `启动歌声编辑器.vbs`，或打开 `bin/agent-vocal-desktop.exe`。界面依赖 Windows 的 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
 3. 需要采样乐器时，在解压目录运行 `安装乐器音源.ps1`。需要合成歌声时，运行 `安装本地歌声引擎.ps1` 配置 VOICEVOX，或按 [OpenUtau 适配器指南](adapters/openutau/README.md) 配置日语 Classic 声库。音源分别适用各自的条款。
 
+已有工程可用 `bin/agent-vocal-desktop.exe --home <原工作区绝对路径>` 打开。MCP 服务也使用同一个 `--home`。
+
 ## 编辑器
 
-<p><img src="docs/studio-mixer.png" alt="Agent Vocal Studio 的多轨编排与混音器，显示歌声、钢琴和伴奏轨" width="100%"></p>
+编排和钢琴卷帘跟随播放游标滚动。左上角的「工具」汇集编排、调声、混音和 Agent 操作，支持搜索与 `Ctrl+K`。
+
+<p><img src="docs/studio-editor-v0.99.2.png" alt="Agent Vocal Studio v0.99.2 的多轨编排、播放游标和钢琴卷帘" width="100%"></p>
+
+<details>
+<summary>查看工具面板</summary>
+
+<p><img src="docs/studio-tools-v0.99.2.png" alt="工具面板的分类、搜索框和快捷键" width="100%"></p>
+
+</details>
 
 | 工作区 | 支持的操作 |
 | --- | --- |
 | **歌声钢琴卷帘** | 编辑音符、逐音歌词、音高曲线、颤音和跨音延续 |
 | **多轨编排** | 编排歌声、复音乐器和音频片段，编辑速度、拍号及段落 |
-| **试听与混音** | 直接监听干轨、编辑后更新受影响音轨、A/B 试听、轨道效果和总线路由 |
+| **试听与混音** | 实时监听干轨、编辑后更新受影响音轨、A/B 试听、轨道效果、总线路由与真峰值导出 |
 | **交换与交付** | AVPROJ、AVPACK、MIDI、PPSF 曲谱导入预览、WAV 混音和对齐分轨 |
 
 Agent 可以先读取工程版本和选区，再用 `agent_focus` 标出操作目标，预览改动后按版本提交。桌面上可以看到 Agent 正在处理的音轨和范围。 [查看 Agent 选区截图](docs/studio-agent.png)

@@ -18,7 +18,8 @@ function accept(p,external=false){
   const voicesChanged=switched?p.tracks.some(track=>track.openutau_voice):
     p.tracks.some(track=>track.openutau_voice!==project.tracks.find(item=>item.id===track.id)?.openutau_voice);
   const timelineChanged=switched||project&&(project.bpm!==p.bpm||JSON.stringify(project.tempo_map||[])!==JSON.stringify(p.tempo_map||[]));
-  const staleTruePeak=revisionChanged&&[project,p].some(item=>item?.master_limiter?.peak_mode==='true_peak');
+  const staleTruePeak=revisionChanged&&!audio.liveMix&&!audio.monitorStarting&&
+    project?.master_limiter?.peak_mode==='true_peak';
   if(project&&(timelineChanged||voicesChanged||staleTruePeak||playingArchivedMix&&revisionChanged)){
     playingArchivedMix=false;
     if(window.desktopNative)audio.removeAttribute('src');

@@ -1731,13 +1731,18 @@ void (async()=>{
     detectorChoice.value='true_peak';
     detectorChoice.dispatchEvent(new Event('change',{bubbles:true}));
     const outputCeiling=fxDialog.querySelector('[data-param=ceiling_db]');
-    check(outputCeiling.closest('label').textContent.includes('dBTP')&&$('studioFxMessage').textContent.includes('渲染试听'),
-      'True-peak selection was not identified as rendered dBTP');
+    check(outputCeiling.closest('label').textContent.includes('dBTP')&&$('studioFxMessage').textContent.includes('导出用真峰值'),
+      'True-peak selection did not distinguish the live monitor and export');
     outputCeiling.value=-18;
     outputCeiling.dispatchEvent(new Event('input',{bubbles:true}));
     $('studioFxPreview').click();
-    await until(()=>!fxDialog.open&&project.revision===peakFixture.revision+1&&rendered?.master_limiter?.measurement==='true_peak'&&
-      !audio.paused,'Apply and audition did not play the true-peak file',20000);
+    await until(()=>!fxDialog.open&&project.revision===peakFixture.revision+1&&!audio.paused&&audio.liveMix,
+      'Apply and audition did not start live monitoring with true-peak export enabled',20000);
+    const peakJobs=await api('render_jobs',{project_id:project.id,expected_revision:project.revision});
+    check(!rendered&&!peakJobs.jobs.length,'Live playback with true-peak export created a render');
+    await playTruePeakMix();
+    await until(()=>rendered?.master_limiter?.measurement==='true_peak'&&!audio.paused&&!audio.liveMix,
+      'Explicit true-peak audition did not play the rendered file',20000);
     const peakExport=rendered;
     const peakTransport=await transport();
     check(peakExport.loudness.true_peak_dbtp<=-18&&peakExport.loudness.true_peak_dbtp>-18.55&&
@@ -1745,7 +1750,7 @@ void (async()=>{
       'The editor did not use the reported true-peak file');
     let wrongGraphRejected=false;
     try{await audio.monitorMix(project,peakExport.job_id,{tracks:[]})}
-    catch(error){wrongGraphRejected=error.message.includes('真峰值模式')}
+    catch(error){wrongGraphRejected=error.message.includes('真峰值混音')}
     check(wrongGraphRejected&&(await transport()).playing&&!audio.liveMix,
       'Live sample peak took over the rendered true-peak audition');
     cursorBeat=.5;

@@ -309,10 +309,6 @@ impl Settings {
 
     fn validate_budget(&self, rate: u64) -> Result<()> {
         ensure!(
-            !self.limiter.as_ref().is_some_and(Limiter::is_true_peak),
-            "真峰值模式使用渲染后的 WAV 试听"
-        );
-        ensure!(
             (8_000..=96_000).contains(&rate),
             "实时监听支持 8–96 kHz 的输出设备"
         );
@@ -377,6 +373,13 @@ impl Session {
         ensure!(
             render["project_id"] == project.id && render["revision"] == project.revision,
             "试听需要使用当前工程版本的混音"
+        );
+        ensure!(
+            !project
+                .master_limiter
+                .as_ref()
+                .is_some_and(Limiter::is_true_peak),
+            "真峰值混音正通过已渲染的 WAV 试听"
         );
         let engine = crate::model::field(render, "engine")?.to_owned();
         let sources = serde_json::from_value(render["preview_sources"].clone())
@@ -630,10 +633,6 @@ impl Session {
             || project.bpm != self.project.bpm
             || project.tempo_map != self.project.tempo_map
             || len != frame_count(&self.project)
-            || project
-                .master_limiter
-                .as_ref()
-                .is_some_and(Limiter::is_true_peak)
             || !routing::same_buses(&self.project.aux_buses, &project.aux_buses)
             || !routing::same_buses(&self.project.mix_groups, &project.mix_groups)
         {
@@ -778,6 +777,7 @@ impl Session {
     }
 }
 
+// The live monitor always uses zero-lookahead sample-peak limiting.
 struct PeakControl {
     input: f32,
     ceiling: f32,

@@ -163,6 +163,7 @@ const commands=[
   ['bundle','另存工程包','Ctrl+Shift+S','folder',click('exportProject')],
   ['bundle_with_mix','另存带混音的工程包','','folder',saveProjectWithMix],
   ['play_archived_mix','试听归档混音','','play',playArchivedMix],
+  ['play_true_peak_mix','试听真峰值混音','','play',playTruePeakMix],
   ['export_audio','导出音频','Ctrl+E','export',click('exportWav')],
   ['export_midi','导出 MIDI','','midi',click('exportMidi')],
   ['undo','撤销','Ctrl+Z','undo',()=>history(false)],

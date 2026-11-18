@@ -70,15 +70,8 @@ function fxShowChanges(){
   $('studioFxSave').disabled=!operations.length;
   clearTimeout(fxMonitorTimer);
   if(!fxDraft||!fxDialog.open||fxSaving)return;
-  if(fxDraft.master?.peak_mode==='true_peak'||project.master_limiter?.peak_mode==='true_peak'){
-    $('studioFxMessage').textContent='真峰值 · 渲染试听';
-    if(fxDraft.previewRequested){
-      fxDraft.previewRequested=false;
-      fxDraft.previewSignature=null;
-      void audio.monitorMix(project,rendered?.job_id,{tracks:[]}).catch(()=>{});
-    }
-    return;
-  }
+  if(fxDraft.master?.peak_mode==='true_peak'||project.master_limiter?.peak_mode==='true_peak')
+    $('studioFxMessage').textContent='实时试听用采样峰值 · 导出用真峰值';
   const activeRender=rendered?.project_id===fxDraft.project_id&&rendered.revision===fxDraft.expected_revision&&rendered.preview_sources?.length;
   if(!window.desktopNative)return;
   if(!audio.liveMix&&(audio.paused||!activeRender)){
@@ -217,7 +210,7 @@ async function applyEffects(listen){
     if(operations.length)await edit(operations,{project_id,expected_revision});
     fxDraft.applied=true;
     fxDialog.close();
-    if(listen&&(fxDraft.master?.peak_mode==='true_peak'||!audio.liveMix||audio.paused)){
+    if(listen&&(!audio.liveMix||audio.paused)){
       if(!audio.paused)audio.pause();
       await render(true);
     }

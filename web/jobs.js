@@ -132,7 +132,12 @@ function renderReady(result,label){
   return [label,result.seconds.toFixed(1)+' 秒',...metrics].join(' · ');
 }
 
-render=async function(play=false,save=false){
+async function playTruePeakMix(){
+  if(project?.master_limiter?.peak_mode!=='true_peak')throw new Error('请先在总线限制器启用真峰值');
+  await render(true,false,true);
+}
+
+render=async function(play=false,save=false,exactPreview=false){
   if(!project||rendering||play&&audio.monitorStarting)return;
   const requestedPreview=previewEpoch,requestedProject=project.id;
   const exportBeats=save&&arrangeSelection?[arrangeSelection.start,arrangeSelection.end]:null;
@@ -143,8 +148,7 @@ render=async function(play=false,save=false){
     await editChain.catch(()=>{});
     if(project?.id!==requestedProject||play&&previewEpoch!==requestedPreview)return;
     const engine=$('renderEngine').value;
-    const truePeak=project.master_limiter?.peak_mode==='true_peak';
-    if(play&&!save&&window.desktopNative&&!truePeak){
+    if(play&&!save&&window.desktopNative&&!exactPreview){
       if(audio.liveMix&&audio.liveEngine===engine){
         try{await audio.resumeLive(loopRange());return}catch{}
       }

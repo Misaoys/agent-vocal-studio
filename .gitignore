@@ -1,0 +1,16 @@
+/target/
+/runtime/
+/projects/
+/assets/
+/exports/
+/.playwright-cli/
+/output/
+/adapters/openutau/bin/
+/adapters/openutau/obj/
+*.zip
+/bin/
+/verification/*_report.json
+__pycache__/
+*.partial
+.env
+.env.*

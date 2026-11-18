@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="studio-token" content="__TOKEN__"><title>Agent Vocal Studio · 歌声编辑器</title><link rel="stylesheet" href="/style.css"><script src="/timeline.js" defer></script><script src="/clip-view.js" defer></script><script src="/transport.js" defer></script><script src="/app.js" defer></script><script src="/pro.js" defer></script><script src="/agent.js" defer></script></head>
+<body><link rel="stylesheet" href="/agent.css"><link rel="stylesheet" href="/apple.css"><script src="/design.js" defer></script><script src="/motion.js" defer></script><script src="/instruments.js" defer></script><script src="/jobs.js" defer></script><script src="/timeline-ui.js" defer></script><link rel="stylesheet" href="/arrangement.css"><link rel="stylesheet" href="/workspace.css"><link rel="stylesheet" href="/pico-grey.css"><link rel="stylesheet" href="/studio.css"><script src="/arrangement.js" defer></script><script src="/clip-ui.js" defer></script><script src="/take-review.js" defer></script><script src="/warp.js" defer></script><script src="/workspace.js" defer></script><script src="/studio.js" defer></script><script src="/effects.js" defer></script><script src="/mixer.js" defer></script><script src="/routing.js" defer></script><script src="/gain-automation.js" defer></script><script src="/harmony.js" defer></script><script src="/recording.js" defer></script><script src="/commands.js" defer></script>
+<aside class="sidebar">
+  <div class="brand"><span class="brandmark">a<span>v</span></span><div>Agent Vocal<span class="subbrand">STUDIO <b>0.1</b></span></div></div>
+  <div class="section-label">工作空间 <button id="newProject" title="新建工程" aria-label="新建工程">＋</button></div>
+  <div class="project-search">
+    <input id="projectSearch" type="search" maxlength="160" aria-label="搜索工程名称或 ID" placeholder="搜索工程">
+    <button id="projectTests" type="button" aria-pressed="false" title="切换到技术测试工程">测试</button>
+  </div>
+  <div id="projects" class="projects"></div>
+  <output id="projectListStatus" class="project-list-status" role="status" hidden></output>
+  <nav id="projectPages" class="project-pages" aria-label="工程列表分页" hidden>
+    <button id="projectPrev" type="button" aria-label="上一页" title="上一页"></button>
+    <output id="projectPage"></output>
+    <button id="projectNext" type="button" aria-label="下一页" title="下一页"></button>
+  </nav>
+  <div class="sidebar-divider"></div>
+  <div class="section-label">音轨 <button id="addTrack" title="添加和声音轨" aria-label="添加和声音轨">＋</button></div>
+  <div id="tracks" class="tracks"></div>
+  <div class="sidebar-footer"><span class="led"></span><div>本地工程 · 自动保存<small>Agent 可直接读取与编辑</small></div><span class="rust-tag">Rust</span></div>
+</aside>
+<main>
+  <header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <input id="projectTitle" aria-label="工程名称" value="未命名工程"></div><div class="save-state" id="saveState">准备就绪</div><button class="ghost" id="importBtn">↥ 导入</button><button class="ghost" id="exportProject">保存工程包</button><button class="primary" id="exportWav">导出音频 <span>↗</span></button><input type="file" id="fileInput" hidden accept=".avpack,.avproj,.json,.mid,.midi,.ppsf,.wav,.mp3,.flac"></header>
+  <section class="session-head"><div><div class="eyebrow">VOCAL EDITOR</div><h1>把想法，写成歌声<span>。</span></h1><p>音符、歌词与每一处起伏，都留在可编辑的工程里。</p></div><div class="engine-badge"><span class="engine-dot" id="engineDot"></span><div id="engineLabel">正在检查歌声引擎<small>本机运行</small></div></div></section>
+  <section class="transport">
+    <div class="transport-buttons"><button id="stop" aria-label="停止">■</button><button id="play" class="play-button" aria-label="播放预览">▶</button><button id="loop" aria-label="循环选中片段" title="循环选中片段">↻</button><span class="time-display" id="timeDisplay">00:00.00</span></div>
+    <div class="tempo-control"><label>BPM<input id="bpm" type="number" min="30" max="300" step="0.1" value="120" aria-label="速度 BPM"></label><span></span><label>拍号<select id="meter" aria-label="拍号"><option>4/4</option><option>3/4</option><option>6/8</option><option>5/4</option><option>7/8</option></select></label></div>
+    <div class="preview-control"><label>预览音源<select id="renderEngine" aria-label="预览音源"><option value="voicevox">本地歌声</option><option value="project">工程音源</option><option value="guide">旋律导唱音</option></select></label></div>
+    <div class="undo-controls"><button id="undo" title="撤销 Ctrl+Z" aria-label="撤销">↶</button><button id="redo" title="重做 Ctrl+Shift+Z" aria-label="重做">↷</button></div>
+  </section>
+  <section class="editor-shell">
+    <div class="editor-toolbar"><div class="editor-title"><span class="track-swatch"></span><strong id="trackTitle">主唱</strong><span class="pill" id="noteCount">0 音符</span></div><button class="text-button" id="batchLyrics">歌词落字</button><div class="selection-tools"><button id="transposeDown" aria-label="选中音符降低半音" title="降低半音">↓</button><button id="transposeUp" aria-label="选中音符升高半音" title="升高半音">↑</button><button id="quantizeNotes" aria-label="量化选中音符起点" title="量化起点">量化</button><button id="duplicateNotes" aria-label="复制选中乐句" title="向后复制乐句 Ctrl+D">复制</button></div><div class="toolbar-spacer"></div><label>网格<select id="quantize" aria-label="网格量化"><option value="0.25">1/16</option><option value="0.5">1/8</option><option value="1">1/4</option><option value="0.125">1/32</option></select></label><div class="zoom"><button id="zoomOut" aria-label="缩小">−</button><span>缩放</span><button id="zoomIn" aria-label="放大">＋</button></div></div>
+    <div class="editor-content"><div class="roll-column"><div class="roll-viewport" id="rollViewport"><canvas id="roll" aria-label="钢琴卷帘：双击空白添加音符，拖动移动，拖动右边缘改变时值"></canvas><div class="empty-hint" id="emptyHint"><span>♪</span><h2>从第一个音符开始</h2><p>双击网格写入音符，或导入现有曲谱</p><button class="ghost" id="emptyImport">导入曲谱</button></div></div><div class="expression-head"><button class="active" id="pitchTab">音高曲线</button><button id="velocityTab">演唱力度</button><span id="expressionHint">选中音符后，在下方绘制音高变化</span></div><div class="expression-viewport" id="expressionViewport"><canvas id="expression" aria-label="音高曲线与力度编辑区"></canvas></div></div>
+    <aside class="inspector"><div class="inspector-title">音符属性 <span id="selectedIndicator">未选择</span></div><div id="noteInspector"><label>歌词 / 假名<input id="lyric" aria-label="歌词或假名" placeholder="あ" maxlength="40"></label><label class="vowel-continuation" title="接在前一个音符之后，沿用其元音"><input id="vowelContinuation" type="checkbox">延续上一字</label><div class="two-fields"><label>音高<input id="pitch" type="number" min="0" max="127" aria-label="MIDI 音高"></label><label>力度<input id="velocity" type="number" min="1" max="127" aria-label="力度"></label></div><div class="two-fields"><label>起点 · 拍<input id="start" type="number" min="0" step="0.25" aria-label="音符起点"></label><label>时值 · 拍<input id="duration" type="number" min="0.002084" step="0.25" aria-label="音符时值"></label></div><div class="inspector-separator"></div><div id="consonantControls"><h3>咬字</h3><div class="two-fields"><label>子音 · ms<input id="consonantMs" type="number" min="1" max="300" step="any" placeholder="自动" aria-label="前置子音时长（毫秒）"></label><label>元音偏移 · ms<input id="vowelOffset" type="number" min="-120" max="120" step="any" placeholder="0" aria-label="元音落拍偏移（毫秒）"></label></div><button class="subtle" id="readConsonant">分析咬字</button><output id="consonantResult" aria-live="polite" for="consonantMs"></output></div><h3>颤音</h3><label>深度 <output id="depthValue">0 cent</output><input id="vibratoDepth" type="range" min="0" max="200" step="any" value="0" aria-label="颤音深度"></label><div class="two-fields"><label>频率 · Hz<input id="vibratoRate" type="number" min="1" max="12" step="any" value="5.5" aria-label="颤音频率"></label><label>起始 · %<input id="vibratoStart" type="number" min="0" max="100" step="any" value="60" aria-label="颤音开始百分比"></label></div><button class="subtle" id="clearPitch">清除音高曲线</button><button class="danger-text" id="deleteNote">删除音符 <kbd>Del</kbd></button></div><div class="inspector-separator"></div><h3>音轨设置</h3><label>歌手<select id="singer" aria-label="音轨歌手"><option value="">默认歌手</option></select></label><label>音轨名称<input id="trackName" aria-label="音轨名称"></label><label>音量 <output id="gainValue">0 dB</output><input type="range" min="-36" max="6" step="0.5" value="0" id="gain" aria-label="音轨音量"></label><label>声像 <output id="panValue">居中</output><input type="range" min="-1" max="1" step="0.05" value="0" id="pan" aria-label="音轨声像"></label><button class="subtle" id="exportMidi">导出 MIDI 曲谱</button></aside></div>
+  </section>
+  <footer class="statusbar"><span id="statusText">双击添加 · 拖动移动 · 右边缘调整时值 · 空格播放</span><span id="revision">REV —</span><span class="connection"><i></i> Agent 接口就绪</span></footer>
+</main>
+<dialog id="pitchJoinDialog"><form method="dialog">
+  <div class="dialog-heading"><h2 id="pitchJoinTitle">滑音衔接</h2><button value="cancel" class="ghost" aria-label="关闭">×</button></div>
+  <div class="pitch-join-fields" id="pitchJoinFields">
+    <label>衔接前 · ms<input id="pitchJoinLead" type="number" min="0" max="4000" step="1"></label>
+    <label>衔接后 · ms<input id="pitchJoinTrail" type="number" min="0" max="4000" step="1"></label>
+  </div>
+  <div class="pitch-join-fields" id="pitchEdgeFields" hidden>
+    <label>位置<select id="pitchEdgeSide"><option value="start">起音</option><option value="end">尾音</option></select></label>
+    <label>时长 · ms<input id="pitchEdgeLength" type="number" min="20" max="2000" step="1"></label>
+    <label>偏移 · 音分<input id="pitchEdgeOffset" type="number" min="-600" max="600" step="1"></label>
+  </div>
+  <div class="pitch-join-fields" id="pitchReferenceFields" hidden>
+    <label>对齐的单声部干声<select id="pitchReferenceSource"></select></label>
+    <label id="pitchReferenceNoteField" hidden>查看音符<select id="pitchReferenceNote"></select></label>
+  </div>
+  <div class="pitch-join-fields" id="pitchVibratoFields" hidden>
+    <label>深度 · 音分<input id="vibratoShapeDepth" type="number" min="0" max="200" step="any"></label>
+    <label>频率 · Hz<input id="vibratoShapeRate" type="number" min="1" max="12" step="any"></label>
+    <label>起始 · %<input id="vibratoShapeStart" type="number" min="0" max="100" step="any"></label>
+    <label>结束 · %<input id="vibratoShapeEnd" type="number" min="0" max="100" step="any"></label>
+    <label>淡入 · ms<input id="vibratoShapeFadeIn" type="number" min="0" max="2000" step="any"></label>
+    <label>淡出 · ms<input id="vibratoShapeFadeOut" type="number" min="0" max="2000" step="any"></label>
+  </div>
+  <output id="pitchJoinStatus" role="status"></output>
+  <div id="pitchJoinPreview" hidden>
+    <svg id="pitchJoinPlot" viewBox="0 0 432 112" role="img" aria-label="原版与草稿音高曲线">
+      <rect id="pitchVibratoWindow" y="6" height="100" fill="currentColor" opacity=".08" visibility="hidden"/>
+      <line id="pitchJoinMarker" y1="5" y2="107"/>
+      <polyline id="pitchJoinOriginal"/><polyline id="pitchJoinDraft"/>
+    </svg>
+    <div class="pitch-join-legend"><span>原曲线</span><span id="pitchDraftLegend">滑音</span></div>
+  </div>
+  <div id="pitchAudition" class="pitch-audition" hidden aria-label="调声试听">
+    <button type="button" id="pitchAuditionStart">试听</button>
+    <button type="button" id="pitchAuditionA" aria-pressed="false" disabled>A 原版</button>
+    <button type="button" id="pitchAuditionB" aria-pressed="false" disabled>B 滑音</button>
+    <button type="button" id="pitchAuditionStop" aria-label="停止试听" disabled>■</button>
+    <label title="只合成选区及相邻音节"><input type="checkbox" id="pitchLocalPreview">局部干声</label>
+  </div>
+  <div class="dialog-footer"><button type="button" id="previewPitchJoin">预览曲线</button><button type="button" class="primary" id="applyPitchJoin" disabled>应用滑音</button></div>
+</form></dialog>
+<dialog id="lyricsDialog"><form method="dialog">
+  <div class="dialog-heading"><h2>歌词落字</h2><button value="cancel" class="ghost" aria-label="关闭">×</button></div>
+  <label>原歌词<textarea id="lyricsSource" rows="2" maxlength="1200" placeholder="例如：夜の喫茶店"></textarea></label>
+  <button type="button" id="lyricsRead">提取日语读音</button>
+  <label>读音<textarea id="lyricsText" rows="3" aria-label="读音"></textarea></label>
+  <div class="lyrics-options"><select id="lyricsMode" aria-label="落字方式"><option value="kana">连续假名</option><option value="fit">按旋律延音</option><option value="manual">空格分隔的逐音输入</option></select><button type="button" id="lyricsPreview">预览落字</button></div>
+  <output id="lyricsCount" role="status"></output>
+  <ol id="lyricsAlignment" aria-label="已预览的音符和读音" hidden></ol>
+  <div class="dialog-footer"><button type="button" class="primary" id="applyLyrics" disabled>应用歌词</button></div>
+</form></dialog>
+<div id="toast" role="status"></div><audio id="audio" preload="metadata"></audio>
+</body></html>

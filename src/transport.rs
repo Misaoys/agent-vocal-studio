@@ -165,6 +165,9 @@ impl Default for Playback {
 
 impl Playback {
     fn length(&self) -> u64 {
+        if let Some(mixer) = &self.mixer {
+            return mixer.frame_count() as u64;
+        }
         self.silent_frames.unwrap_or_else(|| {
             self.streamed
                 .as_ref()
@@ -486,14 +489,14 @@ pub(crate) struct Transport {
     source: Option<String>,
 }
 
-fn seconds(value: &Value) -> Result<f64> {
+pub(crate) fn seconds(value: &Value) -> Result<f64> {
     value
         .as_f64()
         .filter(|n| n.is_finite() && *n >= 0.)
         .context("无效的播放时间")
 }
 
-fn loop_bounds(value: &Value) -> Result<Option<(f64, f64)>> {
+pub(crate) fn loop_bounds(value: &Value) -> Result<Option<(f64, f64)>> {
     if value.is_null() {
         return Ok(None);
     }
@@ -702,6 +705,50 @@ impl Transport {
 
     pub(crate) fn monitor_origin(&self) -> (usize, Option<(usize, usize)>) {
         self.playback.lock().unwrap().window()
+    }
+
+    pub(crate) fn prepare_live_output(&mut self) -> Result<u64> {
+        self.ensure_stream()?;
+        Ok(self.output_rate())
+    }
+
+    pub(crate) fn play_live(
+        &mut self,
+        mixer: crate::live_mix::Mixer,
+        position: f64,
+        bounds: Option<(f64, f64)>,
+    ) -> Result<()> {
+        self.ensure_stream()?;
+        let mut state = self.playback.lock().unwrap();
+        ensure!(mixer.rate() == state.output_rate, "试听期间音频设备已变化");
+        let retired_render = state.replace_render(RenderSource::Memory(Vec::new()));
+        let retired_mixer = state.mixer.replace(mixer);
+        let retired_audition = state.audition.take();
+        state.silent_frames = None;
+        state.mix_fade = 0;
+        state.live_frames = 0;
+        state.mix_changes = 0;
+        state.audio_frames = 0;
+        state.wraps = 0;
+        state.set_loop(bounds);
+        let frame = source_frame(position);
+        let position = if let Some((start, end)) = state.loop_frames {
+            if !(start..end).contains(&frame) {
+                start as f64 / SOURCE_RATE as f64
+            } else {
+                position
+            }
+        } else if frame >= state.length() {
+            0.
+        } else {
+            position
+        };
+        state.seek(position);
+        state.playing = true;
+        self.source = None;
+        drop(state);
+        drop((retired_render, retired_mixer, retired_audition));
+        Ok(())
     }
 
     pub(crate) fn begin_live(&mut self, mixer: crate::live_mix::Mixer) -> Result<()> {

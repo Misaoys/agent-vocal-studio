@@ -870,13 +870,14 @@ pub(crate) fn prepare_monitor_sources(
     project: &Project,
     engine: &str,
     tracks: &std::collections::HashSet<&str>,
+    required: &std::collections::HashSet<&str>,
     control: &crate::jobs::Control,
 ) -> Result<Vec<crate::source_cache::Source>> {
     match render_inner(
         root,
         project,
         engine,
-        RenderTarget::Monitor(tracks),
+        RenderTarget::Monitor { tracks, required },
         control,
     )? {
         Rendered::Monitor(sources) => Ok(sources),
@@ -894,7 +895,10 @@ enum RenderTarget<'a> {
         end: usize,
         output: Option<&'a crate::audition::SavedOutput>,
     },
-    Monitor(&'a std::collections::HashSet<&'a str>),
+    Monitor {
+        tracks: &'a std::collections::HashSet<&'a str>,
+        required: &'a std::collections::HashSet<&'a str>,
+    },
 }
 enum Rendered {
     Export(Value),
@@ -1251,7 +1255,7 @@ fn render_inner(
     let scratch;
     let (job, monitor, audition) = match target {
         RenderTarget::Export { job, monitor } => (job, monitor, false),
-        RenderTarget::Audition { .. } | RenderTarget::Monitor(_) => {
+        RenderTarget::Audition { .. } | RenderTarget::Monitor { .. } => {
             scratch = uid("compare_work");
             (
                 scratch.as_str(),
@@ -1261,7 +1265,7 @@ fn render_inner(
         }
     };
     let monitor_tracks = match target {
-        RenderTarget::Monitor(ids) => Some(ids),
+        RenderTarget::Monitor { tracks, .. } => Some(tracks),
         _ => None,
     };
     let mut excerpt = match target {
@@ -1322,28 +1326,36 @@ fn render_inner(
             && !t.is_audio()
             && voice_route(mode, t).0 == "voicevox"
     };
-    let needs_voicevox = p.tracks.iter().filter(|t| uses_voicevox(t)).any(|t| {
-        monitor_tracks.map_or_else(
-            || audible_track(t) || requested_keys.contains(t.id.as_str()),
-            |ids| ids.contains(t.id.as_str()),
-        )
+    let needs_voicevox = p
+        .tracks
+        .iter()
+        .filter(|t| uses_voicevox(t))
+        .any(|t| match target {
+            RenderTarget::Monitor { required, .. } => required.contains(t.id.as_str()),
+            _ => audible_track(t) || requested_keys.contains(t.id.as_str()),
+        });
+    let try_voicevox = monitor_tracks.is_some_and(|ids| {
+        p.tracks
+            .iter()
+            .any(|track| uses_voicevox(track) && ids.contains(track.id.as_str()))
     });
     let mut voice_backend = String::new();
-    let voice_engine = if needs_voicevox || prepare_all && p.tracks.iter().any(uses_voicevox) {
-        let setup = (|| -> Result<VoiceEngine> {
-            let engine = VoiceEngine::load(control)?;
-            voice_backend = engine.fingerprint()?;
-            Ok(engine)
-        })();
-        control.check()?;
-        if needs_voicevox {
-            Some(setup?)
+    let voice_engine =
+        if needs_voicevox || try_voicevox || prepare_all && p.tracks.iter().any(uses_voicevox) {
+            let setup = (|| -> Result<VoiceEngine> {
+                let engine = VoiceEngine::load(control)?;
+                voice_backend = engine.fingerprint()?;
+                Ok(engine)
+            })();
+            control.check()?;
+            if needs_voicevox {
+                Some(setup?)
+            } else {
+                setup.ok()
+            }
         } else {
-            setup.ok()
-        }
-    } else {
-        None
-    };
+            None
+        };
     ensure!(
         len > if audition { 0 } else { 16800 },
         "Project has no notes"
@@ -1567,17 +1579,27 @@ fn render_inner(
             }
         })
     };
-    if let Some(ids) = monitor_tracks {
-        let span = 0.9 / ids.len().max(1) as f64;
+    if let RenderTarget::Monitor { tracks, required } = target {
+        let span = 0.9 / tracks.len().max(1) as f64;
         for (index, track) in p
             .tracks
             .iter()
-            .filter(|track| ids.contains(track.id.as_str()))
+            .filter(|track| tracks.contains(track.id.as_str()))
             .enumerate()
         {
-            render_source(track, 0.04 + index as f64 * span, false)?;
+            if let Err(error) = render_source(track, 0.04 + index as f64 * span, false) {
+                control.check()?;
+                if required.contains(track.id.as_str()) {
+                    return Err(error);
+                }
+            }
         }
-        ensure!(preview_sources.len() == ids.len(), "监听音轨缺失");
+        ensure!(
+            required
+                .iter()
+                .all(|id| preview_sources.iter().any(|s| &s.track_id == id)),
+            "监听音轨缺失"
+        );
         return Ok(Rendered::Monitor(preview_sources));
     }
     let mut sidechains = SidechainFiles {

@@ -1,7 +1,7 @@
 use crate::{
-    live_mix::{Advance, Preparation, Prepared},
-    model::field,
-    transport::Transport,
+    live_mix::{Advance, Ready, StartPreparation, Work},
+    model::{field, Project},
+    transport::{loop_bounds, seconds, Transport},
 };
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ pub(crate) enum Request {
     User(u64, Value),
     MonitorReady {
         control: Arc<crate::jobs::Control>,
-        result: Result<Box<Prepared>>,
+        result: Result<Ready>,
     },
     Capture {
         command: CaptureCommand,
@@ -245,6 +245,15 @@ enum Owner {
     Agent,
 }
 
+#[derive(Clone)]
+struct MonitorStart {
+    project_id: String,
+    revision: u64,
+    engine: String,
+    position: f64,
+    bounds: Option<(f64, f64)>,
+}
+
 pub(crate) struct Controller {
     transport: Transport,
     session: String,
@@ -255,6 +264,7 @@ pub(crate) struct Controller {
     user_reserved: bool,
     monitor: Option<crate::live_mix::Session>,
     monitor_refresh: Option<Arc<crate::jobs::Control>>,
+    monitor_start: Option<MonitorStart>,
     monitor_error: Option<String>,
     capture: Option<CaptureDrive>,
     click_enabled: bool,
@@ -282,6 +292,7 @@ impl Controller {
             user_reserved: false,
             monitor: None,
             monitor_refresh: None,
+            monitor_start: None,
             monitor_error: None,
             capture: None,
             click_enabled: false,
@@ -301,7 +312,8 @@ impl Controller {
             Owner::User => "user",
             Owner::Agent => "agent",
         }));
-        status["user_reserved"] = json!(self.user_reserved || self.capture.is_some());
+        status["user_reserved"] =
+            json!(self.user_reserved || self.monitor_start.is_some() || self.capture.is_some());
         status["capture_reserved"] = json!(self.capture.is_some());
         status["preview_seconds"] = json!(self
             .preview_seconds
@@ -313,6 +325,7 @@ impl Controller {
         status["monitor_revision"] = json!(self.monitor.as_ref().map(|s| s.revision()));
         status["monitor_local_frames"] = json!(self.monitor.as_ref().map(|s| s.local_frames()));
         status["monitor_refreshing"] = json!(self.monitor_refresh.is_some());
+        status["monitor_starting"] = json!(self.monitor_start.is_some());
         status["monitor_error"] = json!(self.monitor_error);
         status["click_enabled"] = json!(self.click_enabled);
         status
@@ -338,7 +351,7 @@ impl Controller {
         root: &Path,
         args: &Value,
         resolve_mix: impl FnOnce(&str) -> Result<PathBuf>,
-        prepare: impl FnOnce(Preparation) -> Result<()>,
+        prepare: impl FnOnce(Work) -> Result<()>,
     ) -> Result<Value> {
         let command = field(args, "command")?;
         if command == "output_devices" {
@@ -354,13 +367,23 @@ impl Controller {
                 .execute(&json!({"command":"status"}), |_| unreachable!())?;
             return Ok(self.report(status));
         }
+        if self.monitor_start.is_some()
+            && matches!(
+                command,
+                "stop" | "pause" | "clear" | "play" | "audition_side"
+            )
+        {
+            self.cancel_monitor_refresh();
+        }
         let mut native = args.clone();
         let mut refresh_click = command == "clear" && self.click_enabled;
         match command {
             "status" => (),
             "output_device" => {
                 ensure!(
-                    !self.transport.is_playing() && !self.user_reserved,
+                    !self.transport.is_playing()
+                        && !self.user_reserved
+                        && self.monitor_start.is_none(),
                     "停止播放后再更改输出设备"
                 );
                 let choice = serde_json::from_value(
@@ -414,6 +437,36 @@ impl Controller {
                 } else {
                     "status"
                 });
+            }
+            "play_monitor" => {
+                let id = field(args, "project_id")?;
+                let revision = args["revision"]
+                    .as_u64()
+                    .context("Missing editor revision")?;
+                ensure!(
+                    self.project
+                        .as_ref()
+                        .is_some_and(|(p, r)| p == id && *r == revision),
+                    "试听工程版本已变化"
+                );
+                let project = crate::model::Store::new(root.to_path_buf())?.read(id)?;
+                ensure!(project.revision == revision, "试听工程版本已变化");
+                let start = MonitorStart {
+                    project_id: id.to_owned(),
+                    revision,
+                    engine: field(args, "engine")?.to_owned(),
+                    position: seconds(&args["seconds"])?,
+                    bounds: loop_bounds(&args["loop"])?,
+                };
+                if !self.prepare_monitor_start(project, start, prepare)? {
+                    let status = self
+                        .transport
+                        .execute(&json!({"command":"status"}), |_| unreachable!())?;
+                    let mut status = self.report(status);
+                    status["monitor_fallback"] = json!(true);
+                    return Ok(status);
+                }
+                native["command"] = json!("status");
             }
             "monitor_mix" => {
                 ensure!(self.owner == Some(Owner::User), "请先从编辑器播放当前版本");
@@ -472,11 +525,23 @@ impl Controller {
                 self.project = Some((id.to_owned(), revision));
                 refresh_click = changed && self.click_enabled && self.capture.is_none();
                 let mut current = "status";
+                let pending = self
+                    .monitor_start
+                    .clone()
+                    .filter(|start| start.project_id == id);
                 if changed {
                     self.cancel_monitor_refresh();
                     self.monitor_error = None;
                 }
-                if self.owner == Some(Owner::Agent) || changed && self.transport.has_audition(None)
+                if let Some(mut start) = pending.filter(|_| changed) {
+                    let project = crate::model::Store::new(root.to_path_buf())?.read(id)?;
+                    ensure!(project.revision == revision, "试听工程版本已变化");
+                    start.revision = revision;
+                    if !self.prepare_monitor_start(project, start, prepare)? {
+                        current = "clear";
+                    }
+                } else if self.owner == Some(Owner::Agent)
+                    || changed && self.transport.has_audition(None)
                 {
                     self.owner = None;
                     current = "clear";
@@ -497,7 +562,7 @@ impl Controller {
                             }
                             Ok(Advance::Preparing(work)) => {
                                 let control = work.control.clone();
-                                if prepare(*work).is_ok() {
+                                if prepare(Work::Update(work)).is_ok() {
                                     self.monitor_refresh = Some(control);
                                 } else {
                                     current = "clear";
@@ -518,6 +583,12 @@ impl Controller {
                     } else {
                         "status"
                     });
+            }
+            "loop" => {
+                if let Some(start) = &mut self.monitor_start {
+                    start.bounds = loop_bounds(&args["loop"])?;
+                }
+                self.owner = Some(Owner::User);
             }
             "loop_sync" => {
                 native["command"] = json!(if self.owner == Some(Owner::User)
@@ -552,12 +623,54 @@ impl Controller {
         }
         if status["live_mix"] != true {
             self.monitor = None;
-            self.cancel_monitor_refresh();
+            if self.monitor_start.is_none() {
+                self.cancel_monitor_refresh();
+            }
         }
         Ok(self.report(status))
     }
 
+    fn prepare_monitor_start(
+        &mut self,
+        project: Project,
+        start: MonitorStart,
+        prepare: impl FnOnce(Work) -> Result<()>,
+    ) -> Result<bool> {
+        let rate = self.transport.prepare_live_output()?;
+        let origin = start.bounds.map_or(start.position, |(first, end)| {
+            if (first..end).contains(&start.position) {
+                start.position
+            } else {
+                first
+            }
+        });
+        let frame = |position: f64| (position * 48_000.).round() as usize;
+        let frames = crate::source_cache::frame_count(&project);
+        let origin = frame(origin);
+        let origin = if origin < frames { origin } else { 0 };
+        let Some(work) = StartPreparation::new(
+            project,
+            &start.engine,
+            rate,
+            (origin, start.bounds.map(|(a, b)| (frame(a), frame(b)))),
+        )?
+        else {
+            return Ok(false);
+        };
+        self.cancel_monitor_refresh();
+        let work = Work::Start(Box::new(work));
+        let control = work.control().clone();
+        prepare(work)?;
+        self.monitor_refresh = Some(control);
+        self.monitor_start = Some(start);
+        self.monitor_error = None;
+        self.owner = Some(Owner::User);
+        self.preview_seconds = None;
+        Ok(true)
+    }
+
     fn cancel_monitor_refresh(&mut self) {
+        self.monitor_start = None;
         if let Some(control) = self.monitor_refresh.take() {
             let _ = control.cancel();
         }
@@ -565,8 +678,9 @@ impl Controller {
 
     pub(crate) fn monitor_ready(
         &mut self,
+        root: &Path,
         control: &Arc<crate::jobs::Control>,
-        result: Result<Box<Prepared>>,
+        result: Result<Ready>,
     ) -> Result<Option<Value>> {
         if !self
             .monitor_refresh
@@ -576,18 +690,31 @@ impl Controller {
             return Ok(None);
         }
         self.monitor_refresh = None;
-        if let Some(session) = &mut self.monitor {
-            let applied = result.and_then(|prepared| {
+        let start = self.monitor_start.take();
+        let applied = result.and_then(|ready| match ready {
+            Ready::Start(prepared) => {
+                let start = start.context("试听请求已经结束")?;
+                let project =
+                    crate::model::Store::new(root.to_path_buf())?.read(&start.project_id)?;
+                ensure!(project.revision == start.revision, "试听工程版本已变化");
+                let (session, mixer) = *prepared;
+                self.transport
+                    .play_live(mixer, start.position, start.bounds)?;
+                self.monitor = Some(session);
+                Ok(())
+            }
+            Ready::Update(prepared) => {
+                let session = self.monitor.as_mut().context("监听会话已经结束")?;
                 let (replacement, update) =
                     session.install(*prepared, self.transport.output_rate())?;
                 self.transport.replace_live_sources(replacement, update)
-            });
-            if let Err(error) = applied {
-                self.monitor_error = Some(error.to_string());
-                self.monitor = None;
-                self.transport
-                    .execute(&json!({"command":"clear"}), |_| unreachable!())?;
             }
+        });
+        if let Err(error) = applied {
+            self.monitor_error = Some(error.to_string());
+            self.monitor = None;
+            self.transport
+                .execute(&json!({"command":"clear"}), |_| unreachable!())?;
         }
         let status = self
             .transport
@@ -613,7 +740,10 @@ impl Controller {
                 clock,
             } => {
                 ensure!(
-                    self.capture.is_none() && !self.user_reserved && !self.transport.is_playing(),
+                    self.capture.is_none()
+                        && self.monitor_start.is_none()
+                        && !self.user_reserved
+                        && !self.transport.is_playing(),
                     "当前播放或录音尚未停止"
                 );
                 ensure!(
@@ -771,6 +901,7 @@ impl Controller {
                 ensure!(self.project.as_ref().is_some_and(|(id, rev)| *id == project_id && *rev == revision), "DESKTOP_PROJECT_MISMATCH: the requested revision must be open in the desktop editor");
                 ensure!(
                     !(self.user_reserved
+                        || self.monitor_start.is_some()
                         || self.capture.is_some()
                         || self.owner == Some(Owner::User) && self.transport.is_playing()),
                     "USER_TRANSPORT_ACTIVE: playback is under user control"
@@ -821,6 +952,7 @@ impl Controller {
                 );
                 ensure!(
                     !(self.user_reserved
+                        || self.monitor_start.is_some()
                         || self.capture.is_some()
                         || self.owner == Some(Owner::User) && self.transport.is_playing()),
                     "USER_TRANSPORT_ACTIVE: playback is under user control"
@@ -863,6 +995,35 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopping_a_pending_monitor_rejects_its_late_result() -> Result<()> {
+        let root = Path::new(".");
+        let mut controller = Controller::new(root, Arc::new(AtomicU64::new(0)));
+        let control = Arc::new(crate::jobs::Control::ephemeral(
+            "test", "project", 1, "guide",
+        ));
+        controller.monitor_refresh = Some(control.clone());
+        controller.monitor_start = Some(MonitorStart {
+            project_id: "project".into(),
+            revision: 1,
+            engine: "guide".into(),
+            position: 0.,
+            bounds: None,
+        });
+        let status = controller.user(
+            root,
+            &json!({"command":"stop"}),
+            |_| unreachable!(),
+            |_| unreachable!(),
+        )?;
+        assert_eq!(status["monitor_starting"], false);
+        assert_eq!(status["playing"], false);
+        assert!(controller
+            .monitor_ready(root, &control, Err(anyhow::anyhow!("late result")))?
+            .is_none());
+        Ok(())
+    }
 
     #[test]
     fn expired_or_superseded_commands_cannot_commit() {

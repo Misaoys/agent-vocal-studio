@@ -50,7 +50,7 @@ codex mcp get agent_vocal_studio
 
 ## 安装与启动
 
-1. 从 [GitHub Releases](https://github.com/Misaoys/agent-vocal-studio/releases/latest) 下载 `Agent-Vocal-Studio-0.98.0-Windows-x64.zip`，完整解压到可写目录。
+1. 从 [GitHub Releases](https://github.com/Misaoys/agent-vocal-studio/releases/latest) 下载 `Agent-Vocal-Studio-0.99.0-Windows-x64.zip`，完整解压到可写目录。
 2. 双击 `启动歌声编辑器.vbs`，或打开 `bin/agent-vocal-desktop.exe`。界面依赖 Windows 的 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
 3. 需要采样乐器时，在解压目录运行 `安装乐器音源.ps1`。需要合成歌声时，运行 `安装本地歌声引擎.ps1` 配置 VOICEVOX，或按 [OpenUtau 适配器指南](adapters/openutau/README.md) 配置日语 Classic 声库。音源分别适用各自的条款。
 
@@ -62,7 +62,7 @@ codex mcp get agent_vocal_studio
 | --- | --- |
 | **歌声钢琴卷帘** | 编辑音符、逐音歌词、音高曲线、颤音和跨音延续 |
 | **多轨编排** | 编排歌声、复音乐器和音频片段，编辑速度、拍号及段落 |
-| **试听与混音** | A/B 试听、音量自动化、轨道效果、编组和共享返回 |
+| **试听与混音** | 直接监听干轨、编辑后更新受影响音轨、A/B 试听、轨道效果和总线路由 |
 | **交换与交付** | AVPROJ、AVPACK、MIDI、PPSF 曲谱导入预览、WAV 混音和对齐分轨 |
 
 Agent 可以先读取工程版本和选区，再用 `agent_focus` 标出操作目标，预览改动后按版本提交。桌面上可以看到 Agent 正在处理的音轨和范围。 [查看 Agent 选区截图](docs/studio-agent.png)

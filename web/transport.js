@@ -25,6 +25,7 @@ class DesktopAudio extends EventTarget {
   get readyState() { return this.duration > 0 ? 1 : 0 }
   get agentRange() { return this.#status?.preview_seconds }
   get liveMix() { return this.#status?.live_mix === true }
+  get monitorStarting() { return this.#status?.monitor_starting === true }
   get liveEngine() { return this.#status?.monitor_engine }
   get trackMeters() { return this.#playing?this.#status?.track_peaks||[]:[] }
   get monitorTrackIds() { return this.#status?.monitor_track_ids||[] }
@@ -71,9 +72,11 @@ class DesktopAudio extends EventTarget {
     const play=document.getElementById('play');
     play.setAttribute('aria-busy',String(!!(status.buffering||status.monitor_refreshing)));
     const statusText=document.getElementById('statusText');
-    if(status.monitor_refreshing)statusText.textContent='正在更新试听音轨';
-    else if(refreshFailed)statusText.textContent='试听更新失败 · '+status.monitor_error;
-    else if(statusText.textContent==='正在更新试听音轨')statusText.textContent=status.live_mix?'试听已更新':'';
+    if(status.monitor_starting)statusText.textContent='正在准备试听音轨';
+    else if(status.monitor_refreshing)statusText.textContent='正在更新试听音轨';
+    else if(refreshFailed)statusText.textContent='试听失败 · '+status.monitor_error;
+    else if(['正在准备试听音轨','正在更新试听音轨'].includes(statusText.textContent))
+      statusText.textContent=status.live_mix?'实时试听':'';
     if(newlyInterrupted)toast('播放文件读取中断，请重新打开试听',true);
     this.#source = status.url;
     this.#time = status.audition_timeline_seconds??status.seconds;
@@ -141,6 +144,13 @@ class DesktopAudio extends EventTarget {
     return this.#send('monitor_mix', {project_id: project.id, revision: project.revision, job_id: jobId, draft});
   }
 
+  async playMonitor(project, engine, cursorSeconds, range) {
+    this.#loop = JSON.stringify(range);
+    return this.#send('play_monitor', {
+      project_id: project.id, revision: project.revision, engine, seconds: cursorSeconds, loop: range
+    });
+  }
+
   async resumeLive(range) {
     await this.#send('resume_live', {loop:range});
   }
@@ -160,7 +170,7 @@ class DesktopAudio extends EventTarget {
 
   pause() {
     this.#setPlaying(false);
-    if (this.#source) this.#send('pause').catch(error => toast(error.message, true));
+    if (this.#source||this.liveMix||this.monitorStarting) this.#send('pause').catch(error => toast(error.message, true));
   }
 
   stop() {
@@ -171,7 +181,7 @@ class DesktopAudio extends EventTarget {
   }
 
   removeAttribute(name) {
-    if (name !== 'src' || (!this.#source&&!this.auditionId)) return;
+    if (name !== 'src' || (!this.#source&&!this.liveMix&&!this.monitorStarting&&!this.auditionId)) return;
     this.#source = null;
     this.#status = null;
     this.#time = 0;

@@ -52,6 +52,111 @@ pub(crate) struct Preparation {
     origin: (usize, Option<(usize, usize)>),
 }
 
+pub(crate) struct StartPreparation {
+    project: Project,
+    engine: String,
+    rate: u64,
+    origin: (usize, Option<(usize, usize)>),
+    control: Arc<crate::jobs::Control>,
+}
+
+pub(crate) enum Work {
+    Start(Box<StartPreparation>),
+    Update(Box<Preparation>),
+}
+
+pub(crate) enum Ready {
+    Start(Box<(Session, Mixer)>),
+    Update(Box<Prepared>),
+}
+
+impl Work {
+    pub(crate) fn control(&self) -> &Arc<crate::jobs::Control> {
+        match self {
+            Self::Start(work) => &work.control,
+            Self::Update(work) => &work.control,
+        }
+    }
+
+    pub(crate) fn run(self, root: &Path) -> Result<Ready> {
+        match self {
+            Self::Start(work) => Ok(Ready::Start(Box::new(work.run(root)?))),
+            Self::Update(work) => Ok(Ready::Update(Box::new(work.run(root)?))),
+        }
+    }
+}
+
+impl StartPreparation {
+    pub(crate) fn new(
+        project: Project,
+        engine: &str,
+        rate: u64,
+        origin: (usize, Option<(usize, usize)>),
+    ) -> Result<Option<Self>> {
+        ensure!(
+            crate::engine::RENDER_ENGINES.contains(&engine),
+            "Unsupported engine"
+        );
+        let tracks = project
+            .tracks
+            .iter()
+            .filter(|t| has_material(t))
+            .collect::<Vec<_>>();
+        ensure!(!tracks.is_empty(), "工程没有可试听的音符或音频");
+        if Settings::saved(&project, &tracks)
+            .validate_budget(rate)
+            .is_err()
+        {
+            return Ok(None);
+        }
+        let control = Arc::new(crate::jobs::Control::ephemeral(
+            &crate::model::uid("monitor"),
+            &project.id,
+            project.revision,
+            engine,
+        ));
+        Ok(Some(Self {
+            project,
+            engine: engine.to_owned(),
+            rate,
+            origin,
+            control,
+        }))
+    }
+
+    fn run(self, root: &Path) -> Result<(Session, Mixer)> {
+        let project = self.project;
+        let solo = project.tracks.iter().any(|t| t.solo && !t.mute);
+        let keys: HashSet<_> = project
+            .tracks
+            .iter()
+            .flat_map(|track| &track.effects)
+            .chain(routing::buses(&project).flat_map(|bus| &bus.effects))
+            .filter_map(Effect::active_sidechain)
+            .collect();
+        let material = project.tracks.iter().filter(|t| has_material(t));
+        let ids = material.clone().map(|t| t.id.as_str()).collect();
+        let required = material
+            .filter(|t| {
+                keys.contains(t.id.as_str())
+                    || active(t, solo)
+                        && routing::group_open(t.output_group.as_deref(), &project.mix_groups)
+            })
+            .map(|t| t.id.as_str())
+            .collect();
+        let sources = crate::engine::prepare_monitor_sources(
+            root,
+            &project,
+            &self.engine,
+            &ids,
+            &required,
+            &self.control,
+        )?;
+        self.control.check()?;
+        Session::from_sources(root, project, self.engine, sources, self.rate, self.origin)
+    }
+}
+
 pub(crate) struct Prepared {
     project: Project,
     material: Vec<Material>,
@@ -113,6 +218,7 @@ impl Preparation {
                 root,
                 &self.project,
                 &self.engine,
+                &ids,
                 &ids,
                 &self.control,
             )?
@@ -273,9 +379,20 @@ impl Session {
             "试听需要使用当前工程版本的混音"
         );
         let engine = crate::model::field(render, "engine")?.to_owned();
-        let len = frame_count(&project);
-        let sources: Vec<Source> = serde_json::from_value(render["preview_sources"].clone())
+        let sources = serde_json::from_value(render["preview_sources"].clone())
             .context("此混音没有实时监听音轨，请重新渲染")?;
+        Self::from_sources(root, project, engine, sources, rate, origin)
+    }
+
+    fn from_sources(
+        root: &Path,
+        project: Project,
+        engine: String,
+        sources: Vec<Source>,
+        rate: u64,
+        origin: (usize, Option<(usize, usize)>),
+    ) -> Result<(Self, Mixer)> {
+        let len = frame_count(&project);
         let ids: HashSet<_> = sources.iter().map(|s| s.track_id.as_str()).collect();
         let solo = project.tracks.iter().any(|t| t.solo && !t.mute);
         ensure!(

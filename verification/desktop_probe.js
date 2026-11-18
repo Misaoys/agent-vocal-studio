@@ -164,6 +164,11 @@ void (async()=>{
       try{await remote(args)}catch(error){failure=String(error.message)}
       check(failure?.includes(code),`Expected ${code}, received ${failure}`);
     }
+    check(playing.live_mix&&playing.monitor_revision===project.revision&&!rendered&&
+      !(await api('render_jobs',{project_id:pid,expected_revision:project.revision,engine:'guide'})).jobs.length,
+      'Desktop Play produced an offline render before starting the monitor');
+    report.direct_monitor_without_export=true;
+    await render(false);
     const request={action:'play',project_id:pid,expected_revision:project.revision,job_id:rendered.job_id,beat_range:[4.5,5],reason:'复听人声进句 · 验证'};
     const human=await remote({action:'status'});
     check(human.owner==='user'&&human.playing,'Human playback ownership not visible to the agent');
@@ -197,7 +202,7 @@ void (async()=>{
     await until(()=>audio.agentRange?.[0]===once.preview_seconds[0]&&!audio.paused,'Remote playback did not update the desktop controls');
     await until(()=>audio.paused,'Agent one-shot did not finish');
     const ended=await remote({action:'status'});
-    check(ended.ended&&Math.abs(ended.seconds-ended.stop_frame/48000)<1e-10&&ended.audio_frames>idle.audio_frames,
+    check(ended.ended&&Math.abs(ended.seconds-ended.stop_frame/48000)<1e-10&&ended.audio_frames>once.audio_frames,
       `Agent one-shot did not stop on its source frame (owner=${ended.owner}, ended=${ended.ended}, seconds=${ended.seconds}, frame=${ended.stop_frame})`);
     const playbackEvent=(await api('agent_events',{after:initialSequence})).events.find(item=>item.kind==='desktop_transport'&&item.reason===request.reason);
     check(playbackEvent,'Agent playback intent was not published');
@@ -666,9 +671,8 @@ void (async()=>{
     await until(()=>!audio.paused,'Could not start the live mix fixture');
     await new Promise(resolve=>setTimeout(resolve,160));
     const dryLevel=await transport();
-    const liveJob=rendered.job_id;
-    check(dryLevel.peak[0]>.1&&rendered.preview_sources.length===2&&rendered.stems.length===1,
-      'Monitor preparation did not include the muted source separately from the rendered stems');
+    check(dryLevel.peak[0]>.1&&dryLevel.monitor_track_ids.length===2&&!rendered,
+      'Direct monitoring did not prepare the muted source or produced an offline mix');
     const tweakLiveEq=async()=>{
       document.activeElement?.blur();
       key(document.body,'F3');
@@ -690,7 +694,7 @@ void (async()=>{
       'Changing EQ restarted the source clock or did not process live device frames');
     const eqDelta=20*Math.log10(quiet.peak[0]/dryLevel.peak[0]);
     check(eqDelta < -15&&eqDelta > -21,`Live EQ changed the dry tone by ${eqDelta} dB`);
-    check(project.revision===mixRevision&&rendered.job_id===liveJob,'Live draft changed the project or published a render');
+    check(project.revision===mixRevision&&!rendered,'Live draft changed the project or published a render');
     $('studioFxClose').click();
     await until(()=>!fxDialog.open,'Live effects did not close');
     await new Promise(resolve=>setTimeout(resolve,320));
@@ -831,8 +835,9 @@ void (async()=>{
     await edit([sourceId,secondMixId].map(track_id=>({op:'update_track',track_id,values:{mute:true,solo:false}})));
     await render(true);
     await until(()=>!audio.paused&&audio.liveMix,'Starting transport from an all-muted project failed');
-    check(rendered.audio_verified_non_silent===false&&rendered.stems.length===0&&rendered.preview_sources.length===2,
-      'Silent preview misreported audio or discarded prepared sources');
+    const mutedMonitor=await transport();
+    check(!rendered&&mutedMonitor.peak.every(peak=>peak===0)&&mutedMonitor.monitor_track_ids.length===2,
+      'Silent monitoring produced an offline mix, audible output, or discarded prepared sources');
     $('stop').click();
     report.desktop_mixer.all_muted_transport_can_start=true;
     const cloneTrackCount=project.tracks.length;
@@ -1947,7 +1952,7 @@ void (async()=>{
     try{
       $('renderEngine').value='voicevox';
       await render(true);
-      await until(()=>!audio.paused&&rendered?.engine==='voicevox','Could not preview the sustained vowel');
+      await until(()=>!audio.paused&&audio.liveEngine==='voicevox','Could not preview the sustained vowel');
       $('stop').click();
     }finally{$('renderEngine').value=previousPreviewEngine}
     chooseGroup(['vowel_ui_tail']);
@@ -2339,10 +2344,10 @@ void (async()=>{
     $('renderEngine').value='voicevox';
     const voiceFullStart=performance.now();
     await render(true);
-    const voiceFullMs=Math.round(performance.now()-voiceFullStart);
     const voicePlayback=await awaitPaged(state=>state.playing&&state.live_mix&&state.live_streaming&&state.duration>24&&
       state.monitor_track_ids.length===2&&
       state.monitor_revision===refreshVoice.revision,'Could not start the real vocal monitor');
+    const voiceFullMs=Math.round(performance.now()-voiceFullStart);
     await invokeNative('transport',{command:'loop',loop:{start:.25,end:1}});
     const editRefreshPitch=async (pitch,noteId='refresh_tail')=>{
       const revision=await agentCall('project_edit',{project_id:project.id,expected_revision:project.revision,
@@ -3004,8 +3009,9 @@ void (async()=>{
       try{
         $('renderEngine').value='openutau';
         $('play').click();
-        await until(()=>rendered?.project_id===voiceTest.id&&rendered?.engine==='openutau'&&!audio.paused,
+        await until(()=>audio.liveEngine==='openutau'&&!audio.paused,
           'The desktop did not play the installed Classic voicebank',25000);
+        await render(false);
         check(rendered.revision===voiceTest.revision&&rendered.audio_verified_non_silent&&
           rendered.credits.some(credit=>credit.includes(installed.openutau.name)),
           'Desktop OpenUtau source, credits or score revision were inconsistent');
@@ -3026,8 +3032,9 @@ void (async()=>{
           check($('renderEngine').value==='project'&&!project.tracks[1].openutau_voice,
             'The voice picker changed the wrong track or kept the forced render mode');
           $('play').click();
-          await until(()=>rendered?.project_id===voiceTest.id&&rendered?.engine==='project'&&!audio.paused,
+          await until(()=>audio.liveEngine==='project'&&!audio.paused,
             'The desktop did not play independent track voices',25000);
+          await render(false);
           check(rendered.voice_sources[main].id==='default'&&rendered.voice_sources[harmony].engine==='voicevox',
             'Desktop mixed render used the wrong providers');
           $('stop').click();

@@ -86,7 +86,12 @@ async function saveProjectWithMix(){
   }
   if(!mix)mix=await archivedMix(scope);
   if(!sameMixScope(scope))return;
-  if(!mix?.audio_verified_non_silent)throw new Error('先播放或导出当前版本的混音');
+  if(!mix){
+    await render(false);
+    if(!sameMixScope(scope))return;
+    mix=rendered;
+  }
+  if(!mix?.audio_verified_non_silent)throw new Error('当前版本没有可归档的混音');
   const pack=await api('project_export',{...scope,format:'avpack',mix_job_id:mix.job_id});
   await download(pack.url);
 }
@@ -128,17 +133,26 @@ function renderReady(result,label){
 }
 
 render=async function(play=false,save=false){
-  if(!project||rendering)return;
-  const requestedPreview=previewEpoch;
+  if(!project||rendering||play&&audio.monitorStarting)return;
+  const requestedPreview=previewEpoch,requestedProject=project.id;
   const exportBeats=save&&arrangeSelection?[arrangeSelection.start,arrangeSelection.end]:null;
   const reserve=play&&window.desktopNative;
   rendering=true;$('play').disabled=true;$('exportWav').disabled=true;
   try{
     if(reserve)await audio.reservePreview(true);
-    await editChain.catch(()=>{});const engine=$('renderEngine').value;
+    await editChain.catch(()=>{});
+    if(project?.id!==requestedProject||play&&previewEpoch!==requestedPreview)return;
+    const engine=$('renderEngine').value;
     const truePeak=project.master_limiter?.peak_mode==='true_peak';
-    if(play&&!save&&window.desktopNative&&!truePeak&&audio.liveMix&&audio.liveEngine===engine){
-      try{await audio.resumeLive(loopRange());return}catch{}
+    if(play&&!save&&window.desktopNative&&!truePeak){
+      if(audio.liveMix&&audio.liveEngine===engine){
+        try{await audio.resumeLive(loopRange());return}catch{}
+      }
+      const status=await audio.playMonitor(project,engine,beatSeconds(cursorBeat),loopRange());
+      if(!status?.monitor_fallback){
+        playingArchivedMix=false;
+        return;
+      }
     }
     const scope={project_id:project.id,expected_revision:project.revision,engine};
     if(rendered?.revision!==scope.expected_revision||rendered.project_id!==scope.project_id||rendered.engine!==engine){
@@ -146,17 +160,14 @@ render=async function(play=false,save=false){
       if(project?.id!==scope.project_id||project?.revision!==scope.expected_revision)return;
       rendered=jobs[0]?.result||null;
     }
-    const prepare_monitor=!!(play&&!save&&window.desktopNative&&!truePeak);
-    const contentCount=project.tracks.filter(t=>t.notes.length||isAudioTrack(t)).length;
     const hasCurrent=rendered?.revision===project.revision&&rendered.project_id===project.id&&rendered.engine===engine;
-    const needsMonitor=prepare_monitor&&!rendered?.prepared_for_monitor&&rendered?.preview_sources?.length!==contentCount;
-    if(hasCurrent&&!needsMonitor&&(play&&!save||rendered.loudness)&&(!save||rendered.audio_verified_non_silent)){
+    if(hasCurrent&&(play&&!save||rendered.loudness)&&(!save||rendered.audio_verified_non_silent)){
       $('statusText').textContent=renderReady(rendered,'试听就绪');
       if(save)showWaveExport(rendered,exportBeats);
       if(play&&previewEpoch===requestedPreview)await playRenderedAudio(rendered);
       return;
     }
-    const job=await api('render_start',{...scope,prepare_monitor});
+    const job=await api('render_start',scope);
     await monitorRenderJob(job.job_id,{play,save,exportBeats,previewEpoch:requestedPreview});
   }catch(e){toast(e.message,true)}
   finally{

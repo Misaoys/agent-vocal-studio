@@ -267,7 +267,7 @@ pub fn run() -> Result<()> {
     let audio_epoch = Arc::new(AtomicU64::new(0));
     let worker_epoch = audio_epoch.clone();
     let (monitor_signal, monitor_queue) = mpsc::sync_channel(1);
-    let monitor_slot = Arc::new(std::sync::Mutex::new(None::<crate::live_mix::Preparation>));
+    let monitor_slot = Arc::new(std::sync::Mutex::new(None::<crate::live_mix::Work>));
     let latest_monitor = monitor_slot.clone();
     let monitor_home = root.clone();
     let monitor_reply = audio_commands.clone();
@@ -278,11 +278,11 @@ pub fn run() -> Result<()> {
                 let Some(work) = latest_monitor.lock().unwrap().take() else {
                     continue;
                 };
-                let control = work.control.clone();
+                let control = work.control().clone();
                 if control.check().is_err() {
                     continue;
                 }
-                let result = work.run(&monitor_home).map(Box::new);
+                let result = work.run(&monitor_home);
                 if monitor_reply
                     .send(Request::MonitorReady { control, result })
                     .is_err()
@@ -327,7 +327,7 @@ pub fn run() -> Result<()> {
                         }
                     }
                     Request::MonitorReady { control, result } => {
-                        match transport.monitor_ready(&control, result) {
+                        match transport.monitor_ready(&audio_home, &control, result) {
                             Ok(Some(status)) => {
                                 if audio_proxy
                                     .send_event(DesktopEvent::AudioUpdate(status))

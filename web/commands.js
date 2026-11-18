@@ -75,7 +75,7 @@ function jumpToStart(){
 const commandDialog=document.createElement('dialog');
 commandDialog.className='command-dialog pico';
 commandDialog.setAttribute('aria-labelledby','commandTitle');
-commandDialog.innerHTML='<div class="dialog-heading"><h2 id="commandTitle">命令</h2><button id="closeCommands" aria-label="关闭">'+icon('close')+'</button></div><input id="commandSearch" type="search" aria-label="搜索命令" placeholder="搜索命令" autocomplete="off"><div id="commandRows" role="list"></div>';
+commandDialog.innerHTML='<div class="dialog-heading"><h2 id="commandTitle">工具</h2><button id="closeCommands" aria-label="关闭">'+icon('close')+'</button></div><input id="commandSearch" type="search" aria-label="搜索工具" placeholder="搜索工具或快捷键" autocomplete="off"><div id="commandRows"></div><footer class="tools-status"></footer>';
 document.body.append(commandDialog);
 wireDialog(commandDialog);
 $('closeCommands').onclick=()=>commandDialog.close();
@@ -155,7 +155,7 @@ $('outputApply').onclick=async()=>{
 };
 outputDialog.addEventListener('cancel',event=>{if($('outputClose').disabled)event.preventDefault()});
 
-const click=id=>()=>$(id).click();
+const click=id=>()=>$(id)?.click();
 const commands=[
   ['new','新建工程','Ctrl+N','plus',click('newProject')],
   ['import','导入工程或伴奏','Ctrl+O','import',click('importBtn')],
@@ -177,9 +177,10 @@ const commands=[
   ['play','播放 / 暂停','Space','play',click('play')],
   ['stop','停止','Enter','stop',click('stop')],
   ['loop','切换选区循环','L','loop',click('loop')],
-  ['record','录音','R','record',click('openRecording')],
-  ['metronome','节拍器','M','metronome',click('metronomeToggle')],
-  ['output_device','音频输出','','speaker',openOutputSettings],
+  ['record','录音','R','record',click('openRecording'),'openRecording'],
+  ['metronome','节拍器','M','metronome',click('metronomeToggle'),'metronomeToggle'],
+  ['output_device','音频输出','','speaker',openOutputSettings,'openOutput'],
+  ['follow_playback','跟随播放游标','','follow',click('followPlayback'),'followPlayback'],
   ['start','返回起点','Home','stop',jumpToStart],
   ['quantize','量化选区','Q','grid',click('quantizeNotes')],
   ['up','升半音','ArrowUp','up',()=>transpose(1)],
@@ -211,8 +212,49 @@ const commands=[
   ['shortcuts','快捷键','F1','grid',()=>openCommands(true)],
   ['about','关于','','wave',showStudioAbout]
 ];
+const extraTools=[
+  ['arrange_range','选择编排范围','grid','arrangeRange'],
+  ['arrange_copy','复制编排范围','copy','arrangeCopy'],
+  ['arrange_move','移动编排范围','right','arrangeMove'],
+  ['arrange_clear','清除编排范围','close','arrangeClear'],
+  ['add_audio_lane','添加音频轨','wave','addAudioLane'],
+  ['clip_append','向当前轨添加音频','plus','clipAppend',true],
+  ['clip_copy','复制音频片段','copy','clipCopy',true],
+  ['clip_settings','音频片段属性','grid','clipSettings',true],
+  ['clip_tempo','音频片段跟速','wave','clipTempo',true],
+  ['clip_warp','音频片段对拍','grid','clipWarp',true],
+  ['group_copy','复制所选音频','copy','groupCopy',true],
+  ['group_tempo','所选片段跟速','wave','groupTempo',true],
+  ['group_crossfade','片段交叉淡化','wave','groupCrossfade',true],
+  ['group_remove','移除所选音频','close','groupRemove',true],
+  ['group_takes','录音片段对照','review','groupTakes',true],
+  ['pitch_reference','参考音高曲线','pitch','pitchReference'],
+  ['read_consonant','分析咬字','wave','readConsonant',true],
+  ['routing','混音路由','sliders','showRouting'],
+  ['gain_automation','音量曲线','sliders','showGainAutomation'],
+  ['harmony','和弦标记','pitch','showHarmony'],
+  ['follow_agent','跟随 Agent','follow','followAgent'],
+  ['composition_design','作品设计','plan','showDesign'],
+  ['score_review','曲谱复核','review','reviewSong'],
+  ['motion_settings','界面动效','sliders','motionSettings']
+];
+for(const [id,label,glyph,source,contextual] of extraTools)
+  commands.push([id,label,'',glyph,click(source),contextual?source:null]);
+const toolGroups=[
+  ['工程',['new','import','save','bundle','bundle_with_mix','play_archived_mix','export_audio','export_midi']],
+  ['编排',['add_audio_lane','arrange_range','arrange_copy','arrange_move','arrange_clear','arrange_transpose','arrange_quantize','section_markers','timeline','harmony']],
+  ['音频片段',['clip_append','split_clip','review_split','clip_copy','clip_settings','clip_slip','clip_tempo','clip_warp',
+    'group_copy','group_tempo','group_crossfade','group_remove','group_takes','record']],
+  ['歌声与音符',['pitch_join','pitch_vibrato','pitch_reference','read_consonant','quantize','up','down','octave_up','octave_down']],
+  ['播放与混音',['play','stop','loop','start','follow_playback','metronome','mixer','effects','routing','gain_automation','play_true_peak_mix','output_device']],
+  ['Agent',['follow_agent','composition_design','score_review','knowledge']],
+  ['界面',['arrangement','zoom_in','zoom_out','zoom_reset','motion_settings','shortcuts','about']],
+];
 const byId=new Map(commands.map(item=>[item[0],item]));
 const byKey=new Map(commands.filter(item=>item[2]).map(item=>[item[2],item[0]]));
+const groupedTools=new Set(toolGroups.flatMap(([,ids])=>ids));
+const commandSections=[...toolGroups,['编辑',commands.map(row=>row[0]).filter(id=>!groupedTools.has(id)&&id!=='palette')]];
+const toolToggles={follow_agent:'followAgent',follow_playback:'followPlayback',metronome:'metronomeToggle'};
 
 function nudgeNotes(direction){
   const notes=picked();
@@ -232,18 +274,59 @@ function highlightCommand(index){
 }
 function drawCommands(){
   const query=$('commandSearch').value.trim().toLowerCase();
-  shownCommands=commands.filter(row=>(!shortcutsOnly||row[2])&&(row[1]+' '+row[2]+' '+row[0]).toLowerCase().includes(query));
-  const rows=shownCommands.map(([id,label,key,glyph],i)=>'<button type="button" data-command="'+id+'" role="listitem" class="'+(i===0?'active':'')+'">'+icon(glyph)+'<span>'+esc(label)+'</span>'+(key?'<kbd>'+esc(key.replace('ArrowUp','↑').replace('ArrowDown','↓').replace('ArrowLeft','←').replace('ArrowRight','→'))+'</kbd>':'')+'</button>');
-  $('commandRows').innerHTML=rows.join('')||'<p>没有匹配的命令</p>';
+  const matches=row=>{
+    const source=row?.[5]&&$(row[5]);
+    return row&&(!shortcutsOnly||row[2])&&(!row[5]||source&&!source.closest('[hidden]')&&!source.disabled)&&
+      (row[1]+' '+row[2]+' '+row[0]).toLowerCase().includes(query);
+  };
+  shownCommands=[];
+  const rows=commandSections.map(([label,ids])=>{
+    const buttons=ids.map(id=>byId.get(id)).filter(matches).map(row=>{
+      const [id,name,key,glyph]=row;
+      const active=shownCommands.length===0?' class="active"':'';
+      shownCommands.push(row);
+      const pressed=toolToggles[id];
+      const toggle=pressed?' aria-pressed="'+($(pressed)?.getAttribute('aria-pressed')==='true')+'"':'';
+      return '<button type="button" data-command="'+id+'"'+active+toggle+'>'+icon(glyph)+'<span>'+esc(name)+'</span>'+
+        (key?'<kbd>'+esc(key.replace('ArrowUp','↑').replace('ArrowDown','↓').replace('ArrowLeft','←').replace('ArrowRight','→'))+'</kbd>':'')+'</button>';
+    });
+    return buttons.length?'<section class="tool-group"><h3>'+esc(label)+'</h3>'+buttons.join('')+'</section>':'';
+  });
+  $('commandRows').innerHTML=rows.join('')||'<p>没有匹配的工具</p>';
   activeCommand=0;
 }
 function openCommands(onlyKeys){
   shortcutsOnly=onlyKeys;
-  $('commandTitle').textContent=onlyKeys?'快捷键':'命令';
+  $('commandTitle').textContent=onlyKeys?'快捷键':'工具';
   $('commandSearch').value='';
   drawCommands();
   commandDialog.showModal();
+  $('commandRows').scrollTop=0;
   $('commandSearch').focus();
+}
+
+const secondaryButtons=[
+  'exportProject','showTimeline','openOutput','metronomeToggle','openRecording','addAudioLane',
+  'arrangeCopy','arrangeMove','arrangeTranspose','arrangeQuantize','arrangeClear','editSections',
+  'clipAppend','clipCopy','clipSlip','clipTempo','clipWarp','groupCopy','groupSlip','groupTempo',
+  'groupCrossfade','groupRemove','groupTakes','transposeDown','transposeUp','quantizeNotes',
+  'duplicateNotes','pitchJoin','pitchVibrato','pitchReference','exportMidi','readConsonant',
+  'showEffects','showRouting','showGainAutomation','showHarmony','followAgent','showDesign',
+  'reviewSong','showKnowledge','motionSettings'
+];
+for(const id of secondaryButtons)$(id)?.setAttribute('data-in-tools','');
+for(const selector of ['.selection-tools','.track-choices'])
+  document.querySelector(selector)?.setAttribute('data-in-tools','');
+const toolsStatus=commandDialog.querySelector('.tools-status');
+for(const item of [$('revision'),document.querySelector('.engine-badge'),document.querySelector('.statusbar .connection')])
+  if(item)toolsStatus.append(item);
+if(!$('studioMenu')){
+  const button=document.createElement('button');
+  button.id='studioMenu';
+  button.innerHTML=icon('grid')+'<span>工具</span>';
+  button.title='工具 (Ctrl+K)';
+  button.onclick=()=>openCommands(false);
+  document.querySelector('.topbar').prepend(button);
 }
 async function runPaletteCommand(id){
   if(!id)return;

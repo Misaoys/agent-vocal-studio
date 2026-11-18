@@ -227,7 +227,7 @@ projectsAside.addEventListener('click',event=>{if(event.target.closest('.project
 studioMain.querySelector('.breadcrumb').firstChild.textContent='';
 studioMain.querySelector('.breadcrumb span').remove();
 
-studioMain.querySelector('.statusbar').before(activityBar);
+studioMain.querySelector('.statusbar').append(activityBar);
 
 const inspectorToggle=document.createElement('button');
 inspectorToggle.id='inspectorToggle';

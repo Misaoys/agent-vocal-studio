@@ -1,13 +1,19 @@
 'use strict';
 // Phrase selection, audio clips and portable sessions share the core revisioned API.
 let selectedGroup=new Set(),groupTrack=null,marquee=null,groupDrag=null,cursorBeat=0,phraseClipboard=[],phraseClipboardLines=[],looping=false;
-const coreAccept=accept;accept=function(p,external=false){if(project&&p.id===project.id&&p.revision<project.revision)return;coreAccept(p,external)};
+let playbackRollEnd=0;
+const coreAccept=accept;
+accept=function(p,external=false){
+  if(project&&p.id===project.id&&p.revision<project.revision)return;
+  if(project?.id!==p.id)playbackRollEnd=0;
+  coreAccept(p,external);
+};
 function picked(){const ns=tr()?.notes||[];return ns.filter(n=>selectedGroup.has(n.id)||(selectedGroup.size===0&&n.id===selected))}
 function chooseGroup(ids){selectedGroup=new Set(ids);groupTrack=trackId;selected=[...selectedGroup].at(-1)||null;inspect();draw()}
 const coreDraw=draw;draw=function(){coreDraw();if(!project)return;if(groupTrack!==trackId){selectedGroup.clear();groupTrack=trackId}const t=tr();selectedGroup=new Set([...selectedGroup].filter(id=>t.notes.some(n=>n.id===id)));
   for(const n of picked()){ctx.strokeStyle='#d3d3d7';ctx.lineWidth=1.5;ctx.strokeRect(beatX(n.start)+.5,pitchY(n.pitch)+1.5,Math.max(3,n.duration*zoom-1),rowH-3)}ctx.lineWidth=1;
   if(marquee){const {x,y,xx,yy}=marquee;ctx.fillStyle='#d0d0d018';ctx.fillRect(Math.min(x,xx),Math.min(y,yy),Math.abs(xx-x),Math.abs(yy-y));ctx.strokeStyle='#bdbdc1';ctx.strokeRect(Math.min(x,xx),Math.min(y,yy),Math.abs(xx-x),Math.abs(yy-y))}
-  if(audio.paused&&cursorBeat>0){ctx.strokeStyle='#cbcbcf';ctx.beginPath();ctx.moveTo(beatX(cursorBeat),0);ctx.lineTo(beatX(cursorBeat),roll.clientHeight);ctx.stroke()}
+  if(audio.paused&&!audio.currentTime&&cursorBeat>0){ctx.strokeStyle='#cbcbcf';ctx.beginPath();ctx.moveTo(beatX(cursorBeat),0);ctx.lineTo(beatX(cursorBeat),roll.clientHeight);ctx.stroke()}
   if(isAudioTrack(t)){
     $('emptyHint').hidden=true;
     const view=$('rollViewport');
@@ -19,8 +25,8 @@ const coreDraw=draw;draw=function(){coreDraw();if(!project)return;if(groupTrack!
   const count=picked().length;if(count>1)$('selectedIndicator').textContent=count+' 音符';
 };
 const coreBeats=beats;beats=function(){
-  const t=tr();
-  return isAudioTrack(t)?Math.max(coreBeats(),Math.ceil((Math.max(0,...trackClips(t).map(clipEndBeat))+4)/4)*4):coreBeats();
+  const t=tr(),end=Math.max(coreBeats(),playbackRollEnd);
+  return isAudioTrack(t)?Math.max(end,Math.ceil((Math.max(0,...trackClips(t).map(clipEndBeat))+4)/4)*4):end;
 };
 const audioSettings=document.createElement('div');
 audioSettings.className='audio-settings';

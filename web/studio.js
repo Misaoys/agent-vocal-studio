@@ -110,24 +110,93 @@ for(const line of [arrangeTransportLine,scoreTransportLine]){
   line.setAttribute('aria-hidden','true');
 }
 arrangeViewport.append(arrangeTransportLine);
-$('rollViewport').append(scoreTransportLine);
-function updateArrangePlayhead(){
-  if(!project)return;
-  const beat=audio.paused?cursorBeat:secondsBeat(audio.currentTime);
-  const x=arrangeLabelWidth+beat*arrangeZoom,y=arrangeHeader+arrangeViewport.scrollTop;
-  arrangeTransportLine.style.transform=`translate3d(${x}px,${y}px,0)`;
-  arrangeTransportLine.style.height=Math.max(0,arrangeViewport.clientHeight-arrangeHeader)+'px';
+const scoreViewport=$('rollViewport');
+scoreViewport.append(scoreTransportLine);
+
+let followPlayback=true;
+try{followPlayback=localStorage.getItem('avs-follow-playback')!=='off'}catch{}
+const followPlaybackButton=document.createElement('button');
+followPlaybackButton.id='followPlayback';
+followPlaybackButton.type='button';
+followPlaybackButton.innerHTML=icon('follow');
+followPlaybackButton.title='跟随播放游标';
+followPlaybackButton.setAttribute('aria-label','跟随播放游标');
+$('loop').after(followPlaybackButton);
+const manualScrollUntil=new WeakMap(),followedScrollLeft=new WeakMap();
+for(const view of [arrangeViewport,scoreViewport]){
+  const deferFollow=()=>manualScrollUntil.set(view,performance.now()+1600);
+  for(const type of ['wheel','pointerdown'])
+    view.addEventListener(type,event=>{if(event.isTrusted)deferFollow()},{capture:true,passive:true});
+  view.addEventListener('scroll',()=>{
+    if(followedScrollLeft.get(view)!==view.scrollLeft)deferFollow();
+    followedScrollLeft.delete(view);
+  },{passive:true});
 }
-function updateScorePlayhead(){
-  scoreTransportLine.hidden=!project||audio.paused;
-  if(!scoreTransportLine.hidden){
-    scoreTransportLine.style.transform=`translate3d(${beatX(secondsBeat(audio.currentTime))}px,0,0)`;
-    scoreTransportLine.style.height=roll.clientHeight+'px';
+
+function updateFollowButton(){
+  followPlaybackButton.setAttribute('aria-pressed',String(followPlayback));
+}
+followPlaybackButton.onclick=()=>{
+  followPlayback=!followPlayback;
+  try{localStorage.setItem('avs-follow-playback',followPlayback?'on':'off')}catch{}
+  updateFollowButton();
+  if(followPlayback){
+    manualScrollUntil.delete(arrangeViewport);
+    manualScrollUntil.delete(scoreViewport);
+    updatePlaybackView();
+  }
+};
+updateFollowButton();
+
+function shouldFollow(view){
+  return followPlayback&&!audio.paused&&view.clientWidth>0&&
+    performance.now()>=(manualScrollUntil.get(view)??0);
+}
+function followHorizontal(view,position,inset){
+  const width=view.clientWidth-inset;
+  if(width<=0)return;
+  const current=view.scrollLeft;
+  if(position<current+inset||position>current+inset+width*.82){
+    const target=Math.max(0,Math.min(view.scrollWidth-view.clientWidth,position-inset-width*.24));
+    if(Math.abs(target-current)>1){
+      view.scrollLeft=target;
+      followedScrollLeft.set(view,view.scrollLeft);
+    }
   }
 }
-audio.addEventListener('timeupdate',updateScorePlayhead);
-audio.addEventListener('pause',updateScorePlayhead);
-audio.addEventListener('ended',updateScorePlayhead);
+function updateArrangePlayhead(){
+  if(!project)return;
+  const beat=audio.paused&&!audio.currentTime?cursorBeat:secondsBeat(audio.currentTime);
+  const x=arrangeLabelWidth+beat*arrangeZoom,y=arrangeHeader+arrangeViewport.scrollTop;
+  const relative=x-arrangeViewport.scrollLeft;
+  arrangeTransportLine.hidden=relative<arrangeLabelWidth||relative>arrangeViewport.clientWidth;
+  arrangeTransportLine.style.transform='translate3d('+x+'px,'+y+'px,0)';
+  arrangeTransportLine.style.height=Math.max(0,arrangeViewport.clientHeight-arrangeHeader)+'px';
+}
+function updatePlaybackView(){
+  scoreTransportLine.hidden=!project||audio.paused&&!audio.currentTime;
+  if(!project)return;
+  const beat=secondsBeat(audio.currentTime),x=beatX(beat);
+  if(arrangementVisible&&shouldFollow(arrangeViewport)&&!arrangePointer&&!clipDrag&&!trackOrderDrag)
+    followHorizontal(arrangeViewport,arrangeLabelWidth+beat*arrangeZoom,arrangeLabelWidth);
+  if(shouldFollow(scoreViewport)&&!drag&&!curveDrag){
+    const width=scoreViewport.clientWidth;
+    const ahead=(width-keyW)/zoom;
+    // Give short or empty parts enough timeline to follow playback of other tracks.
+    if(ahead>0&&x+width*.25>roll.clientWidth){
+      const end=Math.min(arrangementModel().limit+16,Math.ceil((beat+ahead*2)/4)*4);
+      if(end>beats()){
+        playbackRollEnd=end;
+        draw();
+      }
+    }
+    followHorizontal(scoreViewport,x,keyW);
+  }
+  scoreTransportLine.style.transform='translate3d('+x+'px,0,0)';
+  scoreTransportLine.style.height=roll.clientHeight+'px';
+  updateArrangePlayhead();
+}
+for(const event of ['play','timeupdate','pause','ended'])audio.addEventListener(event,updatePlaybackView);
 document.fonts.ready.then(()=>{draw();queueArrangementDraw()});
 
 function fileSelectionChanged(){
@@ -240,7 +309,8 @@ $('studioFileApply').onclick=async()=>{
 if(window.desktopNative){
   const topbar=document.querySelector('.topbar');
   const brand=document.createElement('button');
-  brand.id='studioMenu';brand.title='命令面板 (Ctrl+K)';brand.setAttribute('aria-label','命令面板');brand.innerHTML=icon('wave');
+  brand.id='studioMenu';brand.title='工具 (Ctrl+K)';brand.setAttribute('aria-label','工具');
+  brand.innerHTML=icon('grid')+'<span>工具</span>';
   brand.onclick=()=>window.EditorCommands.execute('palette');
   topbar.prepend(brand);
   const controls=document.createElement('div');

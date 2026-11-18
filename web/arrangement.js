@@ -543,8 +543,6 @@ $('arrangeZoomOut').onclick=()=>arrangeResize(1/1.28);
 arrangeViewport.addEventListener('scroll',queueArrangementDraw,{passive:true});
 for(const kind of ['wheel','pointerdown'])arrangeViewport.addEventListener(kind,event=>{if(event.isTrusted)lastArrangeGesture=performance.now()},{passive:true,capture:true});
 new ResizeObserver(queueArrangementDraw).observe(arrangeViewport);
-audio.addEventListener('timeupdate',()=>typeof arrangeTransportLine==='undefined'?queueArrangementDraw():updateArrangePlayhead());
-audio.addEventListener('pause',()=>typeof arrangeTransportLine==='undefined'?queueArrangementDraw():updateArrangePlayhead());
 
 function openArrangeEdit(action,shift=1){
   if(!project||rangeDialog.open)return;

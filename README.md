@@ -13,7 +13,7 @@ A local Windows editor for vocal sequencing, multitrack arrangement, and mixing.
 **复制这一句话给 Agent**
 
 ```text
-请按 https://github.com/Misaoys/agent-vocal-studio#mcp-接入 下载并解压 Windows 版，把 bin/agent-vocal-studio.exe 的绝对路径注册为名为 agent_vocal_studio 的 stdio MCP 服务，参数用 --mcp --home <解压根目录的绝对路径>，重载客户端后调用 studio_status 验证连接。
+请按 https://github.com/Misaoys/agent-vocal-studio#mcp-接入 下载并解压 Windows 版，把 bin/agent-vocal-studio.exe 的绝对路径注册为名为 agent_vocal_studio 的 stdio MCP 服务，参数用 --mcp --home <解压根目录的绝对路径>，重载客户端后调用 studio_status 验证连接，后续在同一工程内只改指定范围，例外先说明，作曲时先做抓耳、连贯且贴合歌声的主唱旋律。
 ```
 
 如果用 Codex，也可以在解压目录里运行下面的命令。注册后重新打开 Codex。桌面和 MCP 要使用同一个工作区，才能读取桌面选区并控制当前工程的试听。
@@ -42,6 +42,11 @@ codex mcp get agent_vocal_studio
 ```
 
 </details>
+
+## Agent 工作规则
+
+- **在同一工程内修改。** 优先使用用户指定的工程，未指定时核对桌面当前工程。一次任务锁定同一个 `project_id`，只改指明的音轨、乐句或时间范围。确有理由新建、切换、复制或另存工程时，先说明原因，例如用户明确要求、原工程无法安全保存或需要隔离测试。
+- **旋律抓耳、连贯，贴合歌声。** 先写一小段能跟着哼的主唱动机，用有辨识度的节奏和少量变化串起乐句。关键字落在自然的重音上，音高、长音和停顿贴合歌手音域、歌词咬字和换气。伴奏在主唱留白时接句，先试听主唱与简伴奏，再扩展到整首。
 
 ## 安装与启动
 

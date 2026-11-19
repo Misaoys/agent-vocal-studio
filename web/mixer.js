@@ -128,8 +128,10 @@ function refreshMixer(){
     nextStrip=view.strip.nextElementSibling;
     view.name.textContent=track.name;
     view.name.title=track.name;
+    const active=track.id===trackId;
+    view.name.setAttribute('aria-pressed',String(active));
     view.strip.style.setProperty('--strip-color',trackColor(track));
-    view.strip.classList.toggle('selected',track.id===trackId);
+    view.strip.classList.toggle('selected',active);
     for(const button of view.controls){
       const mute=button.dataset.switch==='mute';
       button.setAttribute('aria-label',(mute?'静音 ':'独奏 ')+track.name);

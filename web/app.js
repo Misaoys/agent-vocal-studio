@@ -161,7 +161,21 @@ function beatX(beat){return keyW+beat*zoom}function pitchY(p){return rulerH+(max
 function beats(){return Math.max(16,Math.ceil((Math.max(0,...(tr()?.notes||[]).map(n=>n.start+n.duration))+4)/4)*4)}
 function canvasSize(canvas,w,h){const dpr=window.devicePixelRatio||1;if(canvas.style.width!==w+'px'||canvas.style.height!==h+'px'||canvas.width!==Math.round(w*dpr)){canvas.style.width=w+'px';canvas.style.height=h+'px';canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr)}const c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);return c}
 function refresh(external=false){if(!project)return;const t=tr();document.querySelector('.track-swatch').style.background=trackColor(t);$('projectTitle').value=project.title;$('trackTitle').textContent=t.name;$('noteCount').textContent=t.notes.length+' 音符';$('bpm').value=project.bpm;const meter=project.meter.join('/');if(![...$('meter').options].some(o=>o.value===meter))$('meter').add(new Option(meter,meter));$('meter').value=meter;$('revision').textContent='REV '+String(project.revision).padStart(3,'0');$('emptyHint').hidden=t.notes.length>0;
-  $('tracks').innerHTML=project.tracks.map(t=>`<div class="track-card ${t.id===trackId?'active':''}" data-track="${t.id}" role="button" tabindex="0" aria-label="选择音轨 ${esc(t.name)}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Ctrl+Shift+D"><div class="track-top"><span class="track-dot" style="background:${trackColor(t)}"></span><span class="track-name">${esc(t.name)}</span><button class="${t.mute?'on':''}" data-mute="${t.id}" aria-pressed="${t.mute}" aria-label="静音 ${esc(t.name)}">M</button><button class="${t.solo?'on':''}" data-solo="${t.id}" aria-pressed="${t.solo}" aria-label="独奏 ${esc(t.name)}">S</button></div><small>${isAudioTrack(t)?trackClips(t).length+' 片段':t.instrument?'乐器':'歌声'} · ${t.gain_db>0?'+':''}${t.gain_db} dB</small><button class="track-duplicate" data-duplicate-track="${t.id}" aria-label="复制音轨 ${esc(t.name)}" title="复制音轨 · Ctrl+Shift+D">${icon('copy')}</button><span class="track-grip" data-track-order aria-hidden="true" title="拖动重排音轨 · Alt+↑ / ↓">${icon('grip')}</span></div>`).join('');
+  $('tracks').innerHTML=project.tracks.map(t=>{
+    const active=t.id===trackId;
+    const detail=isAudioTrack(t)?trackClips(t).length+' 片段':t.instrument?'乐器':'歌声';
+    const name=esc(t.name);
+    return `<div class="track-card ${active?'active':''}" style="--track-color:${trackColor(t)}" data-track="${t.id}" role="button" tabindex="0" aria-label="选择音轨 ${name}" aria-pressed="${active}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Ctrl+Shift+D">
+      <div class="track-top">
+        <span class="track-dot"></span><span class="track-name">${name}</span>
+        <button class="${t.mute?'on':''}" data-mute="${t.id}" aria-pressed="${t.mute}" aria-label="静音 ${name}">M</button>
+        <button class="${t.solo?'on':''}" data-solo="${t.id}" aria-pressed="${t.solo}" aria-label="独奏 ${name}">S</button>
+      </div>
+      <small><span class="track-detail">${detail} · ${t.gain_db>0?'+':''}${t.gain_db} dB</span>${active?'<span class="track-state" aria-hidden="true">编辑中</span>':''}</small>
+      <button class="track-duplicate" data-duplicate-track="${t.id}" aria-label="复制音轨 ${name}" title="复制音轨 · Ctrl+Shift+D">${icon('copy')}</button>
+      <span class="track-grip" data-track-order aria-hidden="true" title="拖动重排音轨 · Alt+↑ / ↓">${icon('grip')}</span>
+    </div>`;
+  }).join('');
   for(const card of $('tracks').querySelectorAll('.track-card')){const select=()=>{const track=project.tracks.find(t=>t.id===card.dataset.track);chooseGroup([]);updateArrangeSelection(null);selectAudioClip(track,null);arrangeViewport.focus({preventScroll:true})};card.onclick=event=>{if(!event.target.closest('[data-track-order],[data-duplicate-track]'))select()};card.onkeydown=e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();select()}}}
   for(const b of $('tracks').querySelectorAll('[data-mute],[data-solo]'))b.onclick=e=>{e.stopPropagation();const tid=b.dataset.mute||b.dataset.solo,field=b.dataset.mute?'mute':'solo';edit([{op:'update_track',track_id:tid,values:{[field]:!project.tracks.find(t=>t.id===tid)[field]}}]).catch(()=>{})};
   const ns=t.notes.map(n=>n.pitch);minPitch=Math.min(48,...ns.map(n=>Math.max(0,n-4)));maxPitch=Math.max(84,...ns.map(n=>Math.min(127,n+4)));

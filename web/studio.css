@@ -82,13 +82,28 @@ main .transport :is(.preview-control,.tempo-control,.undo-controls) { border-col
 .arrange-toolbar > strong, .arrange-toolbar #arrangeSpan, .arrange-toolbar button, .editor-toolbar .editor-title strong, .editor-toolbar .pill { color: var(--studio-ink); }
 .arrange-toolbar button:hover, .arrange-toolbar button[aria-pressed=true] { color: #ededf0; background: #363639; }
 #arrangeViewport, .roll-viewport, .expression-viewport { background: var(--studio-floor); scrollbar-color: #5c5c60 #1c1c1e; }
-.arrange-track-headers.tracks, .arrange-track-headers .track-card, .arrange-track-headers .track-card:nth-child(even) { background: #181819; box-shadow: inset 0 -1px #262629; }
+.arrange-track-headers.tracks, .arrange-track-headers .track-card, .arrange-track-headers .track-card:nth-child(even) { background: #181819; }
 .arrange-track-headers .track-card:nth-child(even) { background:#151516; }
-.arrange-track-headers .track-card.active { background: #363639; box-shadow: inset 3px 0 #c8c8cc, inset 0 -1px #49494c; }
-.arrange-track-headers .track-card small { color: #b0b0b4; }
+.arrange-track-headers .track-card:not(.active):hover { background: #242427; }
+.arrange-track-headers .track-card.active {
+  background: color-mix(in srgb, var(--track-color) 26%, #212125);
+  border-bottom-color: color-mix(in srgb, var(--track-color) 48%, #212125);
+}
+.arrange-track-headers .track-card.active::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--track-color); pointer-events: none;
+}
+.arrange-track-headers .track-card:focus-visible { outline: 1px solid #fff; outline-offset: -3px; }
+.arrange-track-headers .track-dot { background: var(--track-color); }
+.arrange-track-headers .track-card.active .track-name { color: #fff; }
+.arrange-track-headers .track-card small { display: flex; align-items: baseline; gap: 6px; color: #b0b0b4; }
+.arrange-track-headers .track-detail { overflow: hidden; text-overflow: ellipsis; }
+.arrange-track-headers .track-state { flex: none; font-weight: 600; color: color-mix(in srgb, var(--track-color) 50%, white); }
+.arrange-track-headers .track-card[data-range-selected]::after {
+  content: ""; position: absolute; inset: 2px 2px 2px 5px; border: 1px dashed #d5d5dc9c; pointer-events: none;
+}
 .arrange-track-headers .track-card button { background: #363638; color: #c5c5c9; }
 .arrange-track-headers .track-card button.on { background: #545457; color:#fff; }
-.arrange-track-headers .track-card { position: relative; }
+.arrange-track-headers .track-card { position: relative; border-bottom: 1px solid #262629; }
 .arrange-track-headers .track-grip { position:absolute; right:6px; bottom:3px; width:24px; height:20px; display:grid; place-items:center; color:#a7a7ab; opacity:.52; cursor:grab; touch-action:none; }
 .arrange-track-headers .track-grip .ui-icon { width:15px; height:15px; }
 .arrange-track-headers .track-card:hover .track-grip, .arrange-track-headers .track-card:focus-within .track-grip { opacity:1; }
@@ -253,7 +268,11 @@ html[data-motion-reduced=true] .agent-activity .agent-signal circle { animation:
 .studio-mixer { background:var(--studio-chrome); min-height:0; flex:1 1 0; overflow:auto; scrollbar-color:#454549 #171719; scrollbar-width:thin; }
 #mixerStrips { display:flex; align-items:stretch; height:100%; min-height:147px; width:max-content; min-width:100%; }
 .mixer-channel { width:104px; flex:none; min-height:0; display:grid; grid-template-rows:auto auto minmax(48px,1fr) auto 12px auto; gap:4px; padding:7px 9px; border-right:1px solid var(--studio-rule); color:var(--studio-text); }
-.mixer-channel.selected { background:#1d1d20; }
+.mixer-channel.selected {
+  background: color-mix(in srgb, var(--strip-color) 17%, #1c1c20);
+  box-shadow: inset 0 3px var(--strip-color);
+}
+.mixer-channel.selected .mixer-name { color: #fff; font-weight: 700; }
 .mixer-name { border:0; border-bottom:2px solid var(--strip-color); border-radius:0; text-align:left; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; padding:1px 2px 4px; }
 .mixer-controls { display:flex; gap:4px; justify-content:center; }
 .mixer-controls button { min-width:24px; padding:2px 5px; font-size:10px; }

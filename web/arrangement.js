@@ -293,11 +293,19 @@ function drawArrangement(){
   ctx.clearRect(0,0,w,h);
   ctx.fillStyle='#0b0b0c';ctx.fillRect(0,0,w,h);
   for(let i=0;i<model.tracks.length;i++){
-    const top=y(i);
+    const {track}=model.tracks[i],top=y(i);
     if(top+arrangeRow<arrangeHeader||top>h)continue;
     ctx.fillStyle=i%2?'#101012':'#0b0b0c';
     ctx.fillRect(0,top,w,arrangeRow);
     ctx.fillStyle='#202022';ctx.fillRect(0,top+arrangeRow-1,w,1);
+    if(track.id===trackId){
+      const width=w-arrangeLabelWidth;
+      ctx.fillStyle=trackColor(track)+'30';
+      ctx.fillRect(arrangeLabelWidth,top,width,arrangeRow);
+      ctx.fillStyle=trackColor(track)+'85';
+      ctx.fillRect(arrangeLabelWidth,top,width,1);
+      ctx.fillRect(arrangeLabelWidth,top+arrangeRow-1,width,1);
+    }
   }
   ctx.save();
   ctx.beginPath();ctx.rect(arrangeLabelWidth,arrangeHeader,w-arrangeLabelWidth,h-arrangeHeader);ctx.clip();
@@ -306,6 +314,10 @@ function drawArrangement(){
     ctx.fillStyle='#232327';ctx.fillRect(left,arrangeHeader,1,h-arrangeHeader);
   }
   const box=arrangePointer?.range||arrangeSelection;
+  const rangeTracks=new Set(box?.ids);
+  for(const card of $('tracks').children){
+    card.toggleAttribute('data-range-selected',rangeTracks.has(card.dataset.track));
+  }
   paintAgentPreview(ctx,audio,x,arrangeHeader,h-arrangeHeader);
   for(let i=0;i<model.tracks.length;i++){
     const {track,clips,low,high}=model.tracks[i],top=y(i);
@@ -331,9 +343,15 @@ function drawArrangement(){
       if(left>=arrangeLabelWidth&&left<w)ctx.fillRect(left,top+47,2,4);
     }
     ctx.globalAlpha=1;
-    if(box?.ids.includes(track.id)){
-      ctx.fillStyle='#bbbbbb22';
-      ctx.fillRect(x(box.start),top+1,x(box.end)-x(box.start),arrangeRow-2);
+    if(rangeTracks.has(track.id)){
+      const left=x(box.start),width=x(box.end)-left;
+      ctx.fillStyle='#e0e0e025';
+      ctx.fillRect(left,top+1,width,arrangeRow-2);
+      ctx.strokeStyle='#d5d5dc9c';
+      ctx.lineWidth=1;
+      ctx.setLineDash([4,3]);
+      ctx.strokeRect(left+.5,top+1.5,Math.max(0,width-1),arrangeRow-3);
+      ctx.setLineDash([]);
     }
     for(const region of arrangeFocus?.regions||[]){
       if(region.track_id!==track.id)continue;

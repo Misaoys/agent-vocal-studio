@@ -224,6 +224,8 @@ pub struct Project {
     pub(crate) section_markers: Option<Vec<SectionMarker>>,
     #[serde(default = "default_tail")]
     pub tail_seconds: f64,
+    #[serde(default, skip_serializing_if = "zero_gain")]
+    pub master_gain_db: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub master_limiter: Option<crate::effects::Limiter>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -244,7 +246,7 @@ pub(crate) struct SectionMarker {
 // Ordered by feature version for minimum-version validation.
 pub(crate) const TRACK_LIMIT: usize = 32;
 const TRACK_COLOR_COUNT: usize = 8;
-pub const PROJECT_FORMATS: [&str; 23] = [
+pub const PROJECT_FORMATS: [&str; 24] = [
     "agent-vocal/1",
     "agent-vocal/2",
     "agent-vocal/3",
@@ -268,6 +270,7 @@ pub const PROJECT_FORMATS: [&str; 23] = [
     "agent-vocal/21",
     "agent-vocal/22",
     "agent-vocal/23",
+    "agent-vocal/24",
 ];
 pub(crate) const MAX_VOWEL_OFFSET_MS: f64 = 120.;
 #[derive(Default, Serialize, Deserialize)]
@@ -275,6 +278,13 @@ struct Document {
     current: Option<Project>,
     undo: Vec<Project>,
     redo: Vec<Project>,
+}
+fn zero_gain(value: &f64) -> bool {
+    *value == 0.
+}
+pub(crate) fn validate_master_gain(db: f64) -> Result<()> {
+    ensure!(finite(db, -60., 12.), "总输出电平须在 -60 到 +12 dB 之间");
+    Ok(())
 }
 fn finite(v: f64, lo: f64, hi: f64) -> bool {
     v.is_finite() && v >= lo && v <= hi
@@ -318,6 +328,10 @@ impl Project {
     }
 
     pub(crate) fn upgrade_feature_format(&mut self) {
+        if self.format == "agent-vocal/24" || self.master_gain_db != 0. {
+            self.format = "agent-vocal/24".into();
+            return;
+        }
         if self.format == "agent-vocal/23" || self.section_markers.is_some() {
             self.format = "agent-vocal/23".into();
             return;
@@ -474,6 +488,11 @@ impl Project {
             .position(|&format| format == self.format)
             .context("Unsupported project format")?
             + 1;
+        validate_master_gain(self.master_gain_db)?;
+        ensure!(
+            format_version >= 24 || self.master_gain_db == 0.,
+            "Master gain requires agent-vocal/24"
+        );
         if let Some(markers) = &self.section_markers {
             ensure!(format_version >= 23, "段落标记需要 agent-vocal/23");
             ensure!(markers.len() <= 40, "最多 40 个段落标记");
@@ -1015,6 +1034,7 @@ impl Store {
             composition: None,
             section_markers: None,
             tail_seconds: 2.,
+            master_gain_db: 0.,
             master_limiter: None,
             aux_buses: vec![],
             mix_groups: vec![],
@@ -1116,6 +1136,7 @@ impl Store {
                             "composition",
                             "section_markers",
                             "tail_seconds",
+                            "master_gain_db",
                             "master_limiter",
                             "aux_buses",
                             "mix_groups",

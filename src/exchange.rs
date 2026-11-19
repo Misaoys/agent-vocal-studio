@@ -187,6 +187,7 @@ pub(crate) fn import(
             "composition",
             "section_markers",
             "tail_seconds",
+            "master_gain_db",
             "master_limiter",
             "harmony",
             "aux_buses",
@@ -223,6 +224,7 @@ pub(crate) fn import(
                     | "agent-vocal/18"
                     | "agent-vocal/19"
                     | "agent-vocal/20"
+                    | "agent-vocal/24"
             )
         ) {
             p.format = settings["format"].as_str().unwrap().into();
@@ -464,6 +466,7 @@ mod tests {
             composition: None,
             section_markers: None,
             tail_seconds: 2.,
+            master_gain_db: 0.,
             master_limiter: None,
             aux_buses: vec![],
             mix_groups: vec![],

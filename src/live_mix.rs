@@ -262,6 +262,7 @@ struct TrackSettings {
 #[derive(Clone, PartialEq)]
 pub(crate) struct Settings {
     tracks: Vec<TrackSettings>,
+    output_gain: f64,
     limiter: Option<Limiter>,
     buses: Vec<Bus>,
 }
@@ -302,6 +303,7 @@ impl Settings {
                     ),
                 })
                 .collect(),
+            output_gain: db_gain(project.master_gain_db),
             limiter: project.master_limiter.clone(),
             buses: routing::buses(project).cloned().collect(),
         }
@@ -474,6 +476,7 @@ impl Session {
                     meter: Meter::default(),
                 })
                 .collect(),
+            output_gain: Fade::new([settings.output_gain]),
             limiter: PeakControl::new(settings.limiter.as_ref(), rate),
             fade_frames: (rate / 125) as u32,
             rate,
@@ -604,6 +607,11 @@ impl Session {
                 let sends = draft.sends.as_deref().unwrap_or(&track.sends);
                 settings.tracks[index].routes = routing::levels(output, sends, groups, returns);
             }
+        }
+        if let Some(gain) = value.get("master_gain_db") {
+            let gain = serde_json::from_value(gain.clone())?;
+            crate::model::validate_master_gain(gain)?;
+            settings.output_gain = db_gain(gain);
         }
         if let Some(value) = value.get("master_limiter") {
             settings.limiter = serde_json::from_value(value.clone())?;
@@ -766,11 +774,13 @@ impl Session {
             .collect();
         let limiter = (self.current.limiter != settings.limiter || self.rate != rate)
             .then(|| PeakControl::new(settings.limiter.as_ref(), rate));
+        let output_gain = settings.output_gain;
         self.current = settings;
         self.rate = rate;
         Ok(Some(Update {
             tracks,
             buses,
+            output_gain,
             limiter,
             rate,
         }))
@@ -849,6 +859,7 @@ pub(crate) struct Update {
     tracks: Vec<TrackUpdate>,
     buses: Vec<BusUpdate>,
     limiter: Option<PeakControl>,
+    output_gain: f64,
     rate: u64,
 }
 pub(crate) struct Mixer {
@@ -857,6 +868,7 @@ pub(crate) struct Mixer {
     len: usize,
     buses: Vec<MixBus>,
     limiter: PeakControl,
+    output_gain: Fade<1>,
     fade_frames: u32,
     rate: u64,
 }
@@ -1110,6 +1122,8 @@ impl Mixer {
             bus.gain.update([parameters.gain], self.fade_frames);
             bus.output.update(parameters.chain, insert_fade, retired);
         }
+        self.output_gain
+            .update([update.output_gain], self.fade_frames);
         if let Some(limiter) = update.limiter {
             self.limiter = limiter;
         }
@@ -1117,6 +1131,7 @@ impl Mixer {
 
     pub(crate) fn reset(&mut self) {
         self.limiter.gain = 1.;
+        self.output_gain.reset();
         for track in &mut self.tracks {
             track.output.reset();
             track.automation_fade = 0;
@@ -1229,6 +1244,7 @@ impl Mixer {
                 *total += sample;
             }
         }
-        Some(self.limiter.apply(sum))
+        let [gain] = self.output_gain.step();
+        Some(self.limiter.apply(sum.map(|sample| sample * gain as f32)))
     }
 }

@@ -283,6 +283,10 @@ pub fn focus(name: &str, args: &Value, result: &Value, before: Option<&Project>)
                 e["region"] = json!("timeline");
                 e["reason"] = json!("已更新段落标记");
             }
+            if values.get("master_gain_db").is_some() {
+                e["region"] = json!("mixer");
+                e["reason"] = json!("已调整总输出电平");
+            }
             if values.get("effects").is_some() || values.get("master_limiter").is_some() {
                 e["region"] = json!("effects");
                 e["reason"] = json!("应用混音效果器参数");

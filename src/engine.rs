@@ -1753,6 +1753,16 @@ fn render_inner(
         audition || !stems.is_empty() || monitor && !preview_sources.is_empty(),
         "All tracks are empty or muted"
     );
+    let output_gain = crate::effects::db_gain(p.master_gain_db) as f32;
+    if output_gain != 1. {
+        for (index, frame) in mix.iter_mut().enumerate() {
+            if index % 8192 == 0 {
+                control.check()?;
+            }
+            *frame = frame.map(|sample| sample * output_gain);
+        }
+        stem_peak *= output_gain;
+    }
     let mut master_report = Value::Null;
     let mut final_trim = 1_f32;
     if let (Some(limiter), Some(envelope)) = (&p.master_limiter, &mut envelope) {
@@ -1811,7 +1821,7 @@ fn render_inner(
                 .and_then(|gains| gains.get(excerpt.first + index))
                 .copied()
                 .unwrap_or(1.);
-            *frame = frame.map(|sample| sample * master * scale);
+            *frame = frame.map(|sample| sample * output_gain * master * scale);
         }
         return Ok(Rendered::Audition(excerpt.frames));
     }
@@ -1853,7 +1863,9 @@ fn render_inner(
                 control.check()?;
             }
             let master_gain = envelope.as_ref().map_or(1., |gains| gains[j / 2]);
-            writer.write_sample((sample? * master_gain * scale * 8_388_607.).round() as i32)?
+            writer.write_sample(
+                (sample? * output_gain * master_gain * scale * 8_388_607.).round() as i32,
+            )?
         }
         writer.finalize()?;
         drop(reader);
@@ -2010,6 +2022,7 @@ mod output_tests {
                     "aux_buses":[{"id":"r_tap","name":"Return","gain_db":-5,"effects":[
                         {"kind":"delay","time_ms":63,"mix":1,"feedback":0.16,"damping_hz":5000,"ping_pong":false}
                     ]}],
+                    "master_gain_db":-3,
                     "master_limiter":{"ceiling_db":-20,"input_db":8,"lookahead_ms":5,"release_ms":80,"peak_mode":"true_peak"}
                 }},
                 {"op":"update_track","track_id":ids[1],"values":{"output_group":"g_tap","sends":[{"bus_id":"r_tap","gain_db":-3}]}},
@@ -2086,6 +2099,57 @@ mod output_tests {
             &control(),
         )?;
         assert!(quiet.iter().flatten().all(|sample| *sample == 0.));
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+    #[test]
+    fn master_fader_scales_monitor_excerpt_and_export_without_rebalancing_tracks() -> Result<()> {
+        let root = std::env::temp_dir().join(uid("avs_master_gain"));
+        let store = Store::new(root.clone())?;
+        let source = Track::new("Guide");
+        let id = source.id.clone();
+        let project = store.create("Master gain", 120., [4, 4], vec![source])?;
+        let project = Store::preview_edit(
+            &project,
+            &json!([{"op":"add_notes","track_id":id,"notes":[{"start":0,"duration":2,"pitch":62}]}]),
+        )?;
+        let old: crate::model::Project = serde_json::from_value(serde_json::to_value(&project)?)?;
+        assert_eq!(old.master_gain_db, 0.);
+        let quieter = Store::preview_edit(
+            &old,
+            &json!([{"op":"set_project","values":{"master_gain_db":-12}}]),
+        )?;
+        assert_eq!(quieter.format, "agent-vocal/24");
+        assert_eq!(quieter.tracks[0].gain_db, old.tracks[0].gain_db);
+        let control = || Control::ephemeral("master_gain", &project.id, project.revision, "guide");
+        let loud = render(&root, &old, "master_loud", "guide", false, &control())?;
+        let quiet = render(&root, &quieter, "master_quiet", "guide", false, &control())?;
+        let level = |value: &Value| value["peak_dbfs"].as_f64().unwrap();
+        assert!((level(&loud) - level(&quiet) - 12.).abs() < 0.0001);
+        let range = [4_800, 12_480];
+        let loud_excerpt =
+            audition_mix(&root, &old, "guide", range[0], range[1], None, &control())?;
+        let quiet_excerpt = audition_mix(
+            &root,
+            &quieter,
+            "guide",
+            range[0],
+            range[1],
+            None,
+            &control(),
+        )?;
+        let peak = |frames: &[[f32; 2]]| {
+            frames
+                .iter()
+                .copied()
+                .map(crate::effects::peak)
+                .fold(0., f32::max)
+        };
+        assert!(
+            (f64::from(peak(&quiet_excerpt) / peak(&loud_excerpt)) - crate::effects::db_gain(-12.))
+                .abs()
+                < 0.0001
+        );
         fs::remove_dir_all(root)?;
         Ok(())
     }

@@ -1,26 +1,75 @@
 'use strict';
-const renderProgress=document.createElement('progress');renderProgress.id='renderProgress';renderProgress.max=1;renderProgress.hidden=true;renderProgress.setAttribute('aria-label','渲染工作进度');renderProgress.title='已完成工作量，非剩余时间预测';
-const cancelRender=document.createElement('button');cancelRender.id='cancelRender';cancelRender.className='ghost';cancelRender.hidden=true;cancelRender.innerHTML=icon('close')+'<span>停止渲染</span>';cancelRender.title='请求停止；歌声引擎当前请求返回后结束';
-$('statusText').after(renderProgress,cancelRender);
-let activeRenderJob=null,checkingRemoteJob=false;
+const renderWidget=document.createElement('div');
+renderWidget.className='render-widget';
+renderWidget.hidden=true;
+renderWidget.innerHTML=`
+  <button type="button" id="renderSummary" popovertarget="renderJobPopover">
+    <span id="renderSummaryState">渲染</span>
+    <span class="render-summary-meter" aria-hidden="true"><i></i></span>
+    <span id="renderPercent">0%</span>
+    ${icon('up')}
+  </button>
+  <section id="renderJobPopover" popover aria-labelledby="renderJobPopoverTitle">
+    <header><h2 id="renderJobPopoverTitle">渲染进度</h2><button type="button" popovertarget="renderJobPopover" popovertargetaction="hide" aria-label="关闭渲染详情">${icon('close')}</button></header>
+    <p id="renderStage"></p>
+    <p id="renderIntent" hidden></p>
+    <progress id="renderProgress" max="1" value="0" aria-label="已完成工作量"></progress>
+    <button type="button" id="cancelRender" class="ghost" disabled>${icon('close')}<span>停止渲染</span></button>
+  </section>`;
+const statusText=$('statusText');
+statusText.before(renderWidget);
+const renderJobPopover=$('renderJobPopover');
+const renderSummaryState=$('renderSummaryState'),renderPercent=$('renderPercent'),renderStage=$('renderStage');
+const renderIntent=$('renderIntent'),renderProgress=$('renderProgress'),cancelRender=$('cancelRender');
+const renderMeter=renderWidget.querySelector('.render-summary-meter > i');
+let activeRenderJob=null,checkingRemoteJob=false,cancellingRenderJob=null;
 const jobStageNames={preparing:'准备音源',preparing_voice:'连接歌声引擎',voice_query:'分析歌声',voice_synthesis:'合成歌声',instrument:'渲染乐器',audio:'读取伴奏',sidechain_sources:'准备旁链触发',guide:'生成导唱',cached_source:'复用原始音轨',cached_voice_preview:'复用已试听歌声',track_effects:'处理音轨效果器',mix_buses:'处理编组与返回',master_effects:'计算总线限制',mixing:'混音',writing_stems:'写入分轨',writing_mix:'写入混音',committing:'保存音频'};
 function showRenderJob(job){
   const cancelling=job.status==='cancelling';
-  const description=(cancelling?'正在停止 · 等待当前处理返回':jobStageNames[job.stage]||'正在渲染')+(job.track_name?' · '+job.track_name:'');
+  const stage=cancelling?'等待当前步骤结束':jobStageNames[job.stage]||'正在渲染';
+  const description=job.track_name&&!cancelling?stage+' · '+job.track_name:stage;
   const terminal={complete:'试听文件已渲染',cancelled:'渲染已取消',failed:'渲染失败',interrupted:'渲染已中断'};
-  $('statusText').textContent=terminal[job.status]||description;
-  updateAgentRender(job,terminal[job.status]||description);
-  renderProgress.value=job.progress||0;renderProgress.setAttribute('aria-valuetext',Math.round((job.progress||0)*100)+'%');
-  cancelRender.disabled=!job.can_cancel;cancelRender.querySelector('span').textContent=cancelling?'正在停止':'停止渲染';
+  const message=terminal[job.status]||description;
+  const intent=agentRender&&agentRender.id===job.job_id?agentRender.intent:'';
+  statusText.textContent=message;
+  renderStage.textContent=message;
+  renderIntent.textContent=intent||'';
+  renderIntent.hidden=!intent;
+  updateAgentRender(job,message);
+
+  const progress=job.progress||0,percent=Math.round(progress*100)+'%';
+  renderSummaryState.textContent=cancelling?'正在停止':'渲染';
+  renderPercent.textContent=percent;
+  renderMeter.style.width=percent;
+  renderProgress.value=progress;
+  cancelRender.disabled=!job.can_cancel||cancellingRenderJob===job.job_id;
+  cancelRender.querySelector('span').textContent=cancelling?'正在停止':'停止渲染';
 }
 function renderJobVisibility(visible){
   rendering=visible;$('play').disabled=visible;$('exportWav').disabled=visible;
-  for(const el of [renderProgress,cancelRender]){
-    if(visible&&el.hidden){el.hidden=false;animateElement(el,[{opacity:0,transform:'translateY(3px)'},{opacity:1,transform:'translateY(0)'}],'insert')}
-    else if(!visible&&!el.hidden){const animation=animateElement(el,[{opacity:1},{opacity:0}],'remove');animation.finished.catch(()=>{}).finally(()=>{if(!rendering)el.hidden=true})}
+  statusText.parentElement.classList.toggle('showing-render-job',visible);
+  if(visible&&renderWidget.hidden){
+    renderWidget.hidden=false;
+    showRenderJob({status:'running',stage:'preparing'});
+  }else if(!visible){
+    if(renderJobPopover.matches(':popover-open'))renderJobPopover.hidePopover();
+    renderWidget.hidden=true;
   }
 }
-cancelRender.onclick=async()=>{if(!activeRenderJob)return;try{cancelRender.disabled=true;const v=await api('render_cancel',{job_id:activeRenderJob});showRenderJob(v.job)}catch(e){toast(e.message,true);cancelRender.disabled=false}};
+cancelRender.onclick=async()=>{
+  const id=activeRenderJob;
+  if(!id||cancellingRenderJob===id)return;
+  cancellingRenderJob=id;
+  cancelRender.disabled=true;
+  try{
+    const {job}=await api('render_cancel',{job_id:id});
+    if(activeRenderJob===id)showRenderJob(job);
+  }catch(error){
+    if(activeRenderJob===id){toast(error.message,true);cancelRender.disabled=false}
+  }finally{
+    if(cancellingRenderJob===id)cancellingRenderJob=null;
+  }
+};
 async function playRenderedAudio(result){
   const url=result.mix_url;
   playingArchivedMix=result.archived_mix===true;
@@ -102,7 +151,7 @@ async function monitorRenderJob(id,options={}){
     for(;;){
       let v;try{v=await api('render_status',{job_id:id})}catch(e){
         if(e.message.includes('Unknown job'))throw e;
-        $('statusText').textContent='任务连接中断 · 正在恢复';await new Promise(r=>setTimeout(r,1500));continue;
+        renderStage.textContent='任务连接中断 · 正在恢复';await new Promise(r=>setTimeout(r,1500));continue;
       }
       showRenderJob(v);
       if(v.status==='cancelled'){$('statusText').textContent='渲染已停止';return}

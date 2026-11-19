@@ -1,6 +1,6 @@
 [package]
 name = "agent-vocal-studio"
-version = "0.99.2"
+version = "0.99.3"
 edition = "2021"
 description = "A local, agent-first vocal piano-roll editor"
 license = "MIT"

@@ -32,6 +32,8 @@ function accept(p,external=false){
   if(switched){
     projectLoadRequest++;
     resetAgentPresence();
+  }else if(revisionChanged){
+    invalidateAgentHighlight(p.revision);
   }
   if(window.desktopNative&&revisionChanged)audio.setProject(p).catch(error=>toast(error.message,true));
   if(!p.tracks.some(t=>t.id===trackId)){trackId=p.tracks[0].id;selected=null}

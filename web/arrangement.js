@@ -744,7 +744,7 @@ async function focusArrangement(event,generation){
   }
   drawArrangement();
   const focus=arrangeFocus;
-  setTimeout(()=>{if(arrangeFocus===focus){arrangeFocus=null;agentCursor.classList.remove('visible');queueArrangementDraw()}},4200);
+  setTimeout(()=>{if(arrangeFocus===focus)clearAgentHighlight()},4200);
 }
 
 updateArrangeSelection(null);

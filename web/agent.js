@@ -1,11 +1,42 @@
 'use strict';
 let eventSequence=0,journalReady=false,followAgent=true,focusGeneration=0;
 let agentRender=null,pendingAgentTarget=null,lastAgentOrder=0,showingAgentIntent=false;
+let agentFlashTarget=null;
 const activityBar=document.createElement('section');activityBar.className='agent-activity';activityBar.dataset.agentPhase='idle';activityBar.setAttribute('aria-label','Agent 工作状态');activityBar.innerHTML='<div class="agent-copy" role="status" aria-atomic="true"><svg class="agent-signal" viewBox="0 0 22 14" aria-hidden="true"><circle cx="3" cy="7" r="1.5"/><circle cx="11" cy="7" r="1.5"/><circle cx="19" cy="7" r="1.5"/></svg><span id="agentPhase">Agent 待命</span><strong id="agentAction"></strong><span id="agentOutcome" hidden></span></div><button id="followAgent" class="on" aria-pressed="true">◎ 跟随 Agent</button><button id="showDesign">作品设计</button><button id="reviewSong">曲谱复核</button><button id="showKnowledge">创作知识 ↗</button>';
 document.querySelector('.editor-shell').before(activityBar);
 const agentCursor=document.createElement('div');agentCursor.id='agentCursor';agentCursor.setAttribute('aria-hidden','true');agentCursor.innerHTML='<svg width="25" height="25" viewBox="0 0 25 25"><polygon points="4,4 21,12 10,21" fill="#ededed20" stroke="#eeeeef" stroke-width="1.6" stroke-linejoin="round"/></svg>';document.body.append(agentCursor);
-$('followAgent').onclick=()=>{followAgent=!followAgent;$('followAgent').classList.toggle('on',followAgent);$('followAgent').setAttribute('aria-pressed',String(followAgent));if(!followAgent)agentCursor.classList.remove('visible')};
-function showCursor(x,y,element){agentCursor.style.transform=`translate(${Math.max(3,Math.min(innerWidth-27,x-4))}px,${Math.max(3,Math.min(innerHeight-27,y-4))}px)`;agentCursor.classList.add('visible');if(element){element.classList.add('agent-flash');setTimeout(()=>element.classList.remove('agent-flash'),1600)}}
+$('followAgent').onclick=()=>{followAgent=!followAgent;$('followAgent').classList.toggle('on',followAgent);$('followAgent').setAttribute('aria-pressed',String(followAgent));if(!followAgent)clearAgentPointer()};
+function showCursor(x,y,element){
+  agentCursor.style.transform='translate('+Math.max(3,Math.min(innerWidth-27,x-4))+'px,'+
+    Math.max(3,Math.min(innerHeight-27,y-4))+'px)';
+  agentCursor.classList.add('visible');
+  if(element){
+    agentFlashTarget=element;
+    element.classList.add('agent-flash');
+    const generation=focusGeneration;
+    setTimeout(()=>{if(generation===focusGeneration&&agentFlashTarget===element){
+      element.classList.remove('agent-flash');
+      agentFlashTarget=null;
+    }},1600);
+  }
+}
+function clearAgentPointer(){
+  agentCursor.classList.remove('visible');
+  agentFlashTarget?.classList.remove('agent-flash');
+  agentFlashTarget=null;
+}
+function clearAgentHighlight(){
+  clearAgentPointer();
+  if(arrangeFocus){
+    arrangeFocus=null;
+    queueArrangementDraw();
+  }
+}
+function invalidateAgentHighlight(revision){
+  if(pendingAgentTarget?.revision<revision)
+    pendingAgentTarget=null;
+  clearAgentHighlight();
+}
 function agentInputBusy(){
   return !!(drag||curveDrag||arrangePointer||clipDrag||trackOrderDrag||document.querySelector('dialog:modal')||
     document.activeElement?.matches('input,textarea,select,[contenteditable=true]'));
@@ -36,7 +67,7 @@ function resetAgentPresence(){
   lastAgentOrder=0;
   showingAgentIntent=false;
   pendingAgentTarget=null;
-  agentCursor.classList.remove('visible');
+  clearAgentHighlight();
   agentLine('idle','');
 }
 function updateAgentRender(job,description){
@@ -57,6 +88,7 @@ for(const type of ['pause','ended'])audio.addEventListener(type,()=>{
 const passiveAgentReads=new Set(['project_read','selection_resolve','timeline_query','arrangement_query','audio_clips']);
 function displayAgentEvent(event){
   if(event.project_id&&event.project_id!==project?.id)return false;
+  if(event.kind==='focus'&&Number.isInteger(event.revision)&&event.revision<project?.revision)return false;
   const intentOrder=event.kind==='focus'?event.sequence:event.intent_sequence;
   const linkedRender=['render_finished','render_cancel'].includes(event.kind)&&agentRender?.id===event.job_id?agentRender:null;
   const order=intentOrder||linkedRender?.order||event.sequence;
@@ -73,15 +105,16 @@ function displayAgentEvent(event){
   agentLine(phase,intent||action,intent?(event.outcome||title):'');
   return true;
 }
-async function displayAgentTarget(event){
+async function displayAgentTarget(event,revision){
+  if(!project||event.project_id!==project.id||revision<project.revision||agentInputBusy())return;
   const generation=++focusGeneration;
-  if(!project||event.project_id!==project.id||agentInputBusy())return;
-  if(event.kind==='desktop_transport'&&event.revision!==project.revision)return;
+  if(event.kind==='desktop_transport'&&revision!==project.revision)return;
   try{
     if(event.kind!=='desktop_transport'){
       const latest=await api('project_read',{project_id:project.id});
       if(generation!==focusGeneration||latest.id!==project?.id||agentInputBusy())return;
       if(latest.revision>project.revision)accept(latest);
+      if(revision!==project.revision)return;
       const regions=agentRegions(event);
       if(regions.length){await focusArrangement({...event,regions},generation);return}
       if(event.region==='arrangement'&&event.track_id){
@@ -94,10 +127,13 @@ async function displayAgentTarget(event){
       timeline:$('showTimeline'),composition:$('showDesign'),mixer:typeof mixerFocusTarget==='function'&&mixerFocusTarget(event.track_id)||$('trackTitle'),effects:$('showEffects')
     }[event.region]||$('trackTitle');
     if(!followAgent)return;
-    arrangeFocus=null;
-    queueArrangementDraw();
-    const r=toolbarTarget.getBoundingClientRect();
-    if(r.width&&r.height)showCursor(r.left+r.width*.65,r.top+r.height*.5,toolbarTarget);
+    for(const target of [toolbarTarget,$('studioMenu')]){
+      const r=target?.getBoundingClientRect();
+      if(!r?.width||!r.height)continue;
+      showCursor(r.left+r.width*.65,r.top+r.height*.5,target);
+      setTimeout(()=>{if(generation===focusGeneration)clearAgentPointer()},4200);
+      break;
+    }
   }catch{}
 }
 
@@ -115,12 +151,18 @@ async function pollAgent(){
     for(const event of visible){
       if(displayAgentEvent(event)&&agentTargetKinds.has(event.kind))target=event;
     }
-    if(target)pendingAgentTarget={target,expires:performance.now()+5000};
+    if(target?.project_id===project?.id&&project){
+      const revision=target.revision??project.revision;
+      if(revision>=project.revision){
+        clearAgentHighlight();
+        pendingAgentTarget={target,revision,expires:performance.now()+5000};
+      }
+    }
     if(pendingAgentTarget?.expires<performance.now())pendingAgentTarget=null;
     if(pendingAgentTarget&&!agentInputBusy()){
-      const next=pendingAgentTarget.target;
+      const {target:next,revision}=pendingAgentTarget;
       pendingAgentTarget=null;
-      await displayAgentTarget(next);
+      await displayAgentTarget(next,revision);
     }
   }catch{}finally{setTimeout(pollAgent,500)}
 }

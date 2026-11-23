@@ -681,13 +681,13 @@ impl Project {
                 if crate::drum_kit::is_kit(i) {
                     ensure!(
                         t.notes.iter().all(|n| (35..=81).contains(&n.pitch)),
-                        "Warm Electronic uses GM drum notes 35–81"
+                        "Built-in drum kits use GM notes 35–81"
                     );
                     ensure!(
                         t.controllers
                             .iter()
                             .all(|c| matches!(c.controller, 7 | 10 | 11)),
-                        "Warm Electronic supports MIDI volume, pan and expression only"
+                        "Built-in drum kits support MIDI volume, pan and expression only"
                     );
                 }
             }

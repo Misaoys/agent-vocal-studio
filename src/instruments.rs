@@ -56,19 +56,20 @@ fn family(program: i32, drums: bool) -> &'static str {
 pub fn catalog(root: &Path) -> Result<Value> {
     let font = load(root);
     let mut presets=font.as_ref().ok().into_iter().flat_map(|font| font.get_presets().iter()).map(|p|{let bank=p.get_bank_number();let program=p.get_patch_number();let drums=bank==128;json!({"name":p.get_name(),"bank":bank,"program":program,"drums":drums,"family":family(program,drums)})}).collect::<Vec<_>>();
-    presets.push(json!({"name":drum_kit::NAME,"bank":drum_kit::BANK,"program":drum_kit::PROGRAM,"drums":true,"family":"鼓组","built_in":true,"supported_controllers":[7,10,11]}));
+    presets.extend(drum_kit::KITS.iter().map(|kit| json!({"name":kit.name,"bank":drum_kit::BANK,"program":kit.program,"drums":true,"family":"鼓组","built_in":true,"supported_controllers":[7,10,11]})));
     presets.sort_by_key(|p| (p["bank"].as_i64(), p["program"].as_i64()));
     Ok(
         json!({"engine":"rustysynth","native_language":"Rust","sample_bank":FONT_NAME,"sha256":FONT_SHA,"installed":font.is_ok(),"soundfont_error":font.err().map(|e| format!("{e:#}")),"presets":presets,"supported_controllers":[1,7,10,11,64,91,93],"controller_defaults":{"1":0,"7":100,"10":64,"11":127,"64":0,"91":40,"93":0},"controller_names":{"1":"颤音/调制","7":"MIDI 音量","10":"MIDI 声像","11":"表情","64":"延音踏板","91":"混响发送","93":"合唱发送"},"percussion_notes":drums(),"limits":["每音音高曲线暂属歌声；乐器使用已支持的轨道 MIDI 控制器","同音高重叠重击使用另一音轨","MIDI 渐变速度使用离散事件；原生工程保留精确曲线"],"source":"https://github.com/mrbumpy409/GeneralUser-GS"}),
     )
 }
 pub fn status(root: &Path) -> Value {
+    let built_in = drum_kit::KITS.map(|kit| kit.name);
     match load(root) {
         Ok(font) => {
-            json!({"installed":true,"built_in_drum_kit":drum_kit::NAME,"sample_bank":FONT_NAME,"preset_count":font.get_presets().len(),"sha256":FONT_SHA})
+            json!({"installed":true,"built_in_drum_kit":drum_kit::NAME,"built_in_drum_kits":built_in,"sample_bank":FONT_NAME,"preset_count":font.get_presets().len(),"sha256":FONT_SHA})
         }
         Err(e) => {
-            json!({"installed":false,"built_in_drum_kit":drum_kit::NAME,"error":format!("{e:#}")})
+            json!({"installed":false,"built_in_drum_kit":drum_kit::NAME,"built_in_drum_kits":built_in,"error":format!("{e:#}")})
         }
     }
 }
@@ -177,6 +178,7 @@ fn events(p: &Project, t: &Track) -> Vec<Event> {
     events
 }
 fn render_builtin(
+    kit: drum_kit::Kit,
     p: &Project,
     t: &Track,
     len: usize,
@@ -206,7 +208,7 @@ fn render_builtin(
         if event.message != 0x90 || event.data2 == 0 || event.sample >= len {
             continue;
         }
-        let pcm = drum_kit::sample(event.data1);
+        let pcm = drum_kit::kit_sample(kit, event.data1);
         let hit_gain = 0.78 * (f32::from(event.data2) / 127.).powf(1.45);
         let end = (event.sample + pcm.len()).min(len);
         let choke = chokes[i].max(event.sample);
@@ -267,8 +269,8 @@ pub fn render(
         .instrument
         .as_ref()
         .context("Track is not an instrument")?;
-    if drum_kit::is_kit(instrument) {
-        return render_builtin(p, t, len, control, base, span);
+    if let Some(kit) = drum_kit::for_instrument(instrument) {
+        return render_builtin(kit, p, t, len, control, base, span);
     }
     let font = load(root)?;
     let bank = if instrument.drums {
@@ -376,6 +378,15 @@ mod tests {
         assert!(peak(48_000, 69_000) > 2. * peak(24_000, 45_000));
         let options = catalog(&root)?;
         assert_eq!(options["installed"], false);
+        assert_eq!(
+            options["presets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["program"].as_u64().unwrap() as u8)
+                .collect::<Vec<_>>(),
+            drum_kit::KITS.map(|k| k.program)
+        );
         assert_eq!(options["presets"][0]["bank"], drum_kit::BANK);
         fs::remove_dir_all(root)?;
         Ok(())

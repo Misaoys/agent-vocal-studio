@@ -8,8 +8,50 @@ pub const NAME: &str = "暖电子 · Warm Electronic";
 pub const FINGERPRINT: &str = "studio-warm-electronic-v1";
 pub const RATE: usize = 48_000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kit {
+    pub program: u8,
+    pub name: &'static str,
+    pub fingerprint: &'static str,
+    pub midi_fallback: u8,
+}
+pub const KITS: [Kit; 4] = [
+    Kit {
+        program: PROGRAM,
+        name: NAME,
+        fingerprint: FINGERPRINT,
+        midi_fallback: 25,
+    },
+    Kit {
+        program: 27,
+        name: "干电子 · Tight Electronic",
+        fingerprint: "studio-tight-electronic-v1",
+        midi_fallback: 24,
+    },
+    Kit {
+        program: 28,
+        name: "软鼓 · Soft Pocket",
+        fingerprint: "studio-soft-pocket-v1",
+        midi_fallback: 32,
+    },
+    Kit {
+        program: 29,
+        name: "碎拍 · Broken Beat",
+        fingerprint: "studio-broken-beat-v1",
+        midi_fallback: 26,
+    },
+];
+
+pub fn for_instrument(instrument: &crate::model::Instrument) -> Option<Kit> {
+    if !instrument.drums || instrument.bank != BANK {
+        return None;
+    }
+    KITS.into_iter()
+        .find(|kit| kit.program == instrument.program)
+}
+
 pub fn is_kit(instrument: &crate::model::Instrument) -> bool {
-    instrument.drums && instrument.bank == BANK && instrument.program == PROGRAM
+    for_instrument(instrument).is_some()
 }
 
 fn wave(pitch: u8) -> Vec<f32> {
@@ -87,12 +129,183 @@ fn wave(pitch: u8) -> Vec<f32> {
     out
 }
 
-pub fn sample(pitch: u8) -> &'static [f32] {
-    static WAVES: OnceLock<[Vec<f32>; 47]> = OnceLock::new();
+// Each original kit uses different physical envelopes and source mixtures: a
+// dry drum-machine transient, a rounded skin-like body, or a gated/stepped pulse.
+fn variant(kit: Kit, pitch: u8) -> Vec<f32> {
+    let flavor = kit.program;
+    let cymbal = matches!(pitch, 42 | 44 | 46 | 49 | 51 | 52 | 53 | 55 | 57 | 59);
+    let kick = matches!(pitch, 35 | 36);
+    let snare = matches!(pitch, 38 | 40);
+    let clap = pitch == 39;
+    let drum = matches!(pitch, 41 | 43 | 45 | 47 | 48 | 50);
+    let open = pitch == 46 || (cymbal && pitch >= 49);
+    let (duration, decay) = match (flavor, pitch) {
+        (27, 35 | 36) => (0.155, 0.043),
+        (28, 35 | 36) => (0.245, 0.069),
+        (29, 35 | 36) => (0.215, 0.055),
+        (27, 38..=40) => (0.113, 0.024),
+        (28, 38..=40) => (0.205, 0.051),
+        (29, 38..=40) => (0.181, 0.039),
+        (27, _) if open => (0.205, 0.045),
+        (28, _) if open => (0.360, 0.100),
+        (29, _) if open => (0.250, 0.062),
+        (27, _) if cymbal => (0.057, 0.010),
+        (28, _) if cymbal => (0.085, 0.021),
+        (29, _) if cymbal => (0.093, 0.023),
+        (27, _) if drum => (0.130, 0.035),
+        (28, _) if drum => (0.240, 0.067),
+        (29, _) if drum => (0.175, 0.050),
+        (27, _) => (0.081, 0.019),
+        (28, _) => (0.124, 0.033),
+        _ => (0.142, 0.034),
+    };
+    let (seed_base, fast_coef, slow_coef, attack_secs) = match flavor {
+        27 => (0x7382_ad49, 0.37, 0.108, 0.0013),
+        28 => (0xd517_7023, 0.21, 0.065, 0.0034),
+        _ => (0x9f84_e831, 0.28, 0.078, 0.0020),
+    };
+    let tone = if kick {
+        (if flavor == 27 {
+            55.
+        } else if flavor == 28 {
+            41.
+        } else {
+            48.
+        }) + f32::from(pitch - 35) * 5.
+    } else if snare {
+        (if flavor == 28 { 134. } else { 174. }) + f32::from(pitch - 38) * 13.
+    } else if drum {
+        74. + f32::from(pitch - 41) * 10.
+    } else {
+        185. + f32::from(pitch % 23) * 26.
+    };
+    let (mut phase, mut fast, mut slow, mut held) = (0_f32, 0_f32, 0_f32, 0_f32);
+    let mut seed = seed_base ^ u32::from(pitch);
+    let nframes = (duration * RATE as f32) as usize;
+    let mut out = Vec::with_capacity(nframes);
+    for i in 0..nframes {
+        let t = i as f32 / RATE as f32;
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        if flavor != 29 || i % 5 == 0 {
+            held = (seed >> 8) as f32 / 8_388_608. - 1.;
+        }
+        fast += (held - fast) * fast_coef;
+        slow += (held - slow) * slow_coef;
+        let band = (fast - slow) * 2.0;
+        let (sweep, speed) = if kick {
+            match flavor {
+                27 => (137., 0.010),
+                28 => (58., 0.023),
+                _ => (98., 0.014),
+            }
+        } else {
+            match flavor {
+                27 => (59., 0.009),
+                28 => (24., 0.029),
+                _ => (77., 0.015),
+            }
+        };
+        phase += TAU / RATE as f32 * (tone + sweep * (-t / speed).exp());
+        let sine = phase.sin();
+        let body = match flavor {
+            27 => 0.92 * sine + 0.08 * (2. * phase).sin() * (-t / 0.014).exp(),
+            28 => 0.90 * sine + 0.10 * (phase * 1.52).sin() * (-t / 0.028).exp(),
+            _ => (0.78 * sine + 0.22 * (phase * 2.07).sin() * (-t / 0.028).exp()).tanh() * 1.18,
+        };
+        let tail = (-t / decay).exp();
+        let pulse = |offset: f32, width: f32| {
+            if t < offset {
+                0.
+            } else {
+                let age = t - offset;
+                (age / 0.0012).min(1.) * (-age / width).exp()
+            }
+        };
+        let (signal, gain) = if kick {
+            let click = if flavor == 27 {
+                0.18
+            } else if flavor == 28 {
+                0.056
+            } else {
+                0.11
+            };
+            (body * tail + click * band * (-t / 0.008).exp(), 0.65)
+        } else if snare {
+            match flavor {
+                27 => (0.36 * body * (-t / 0.018).exp() + 0.80 * band * tail, 0.44),
+                28 => (
+                    0.65 * body * (-t / 0.042).exp() + 0.50 * (band * 0.50 + slow) * tail,
+                    0.45,
+                ),
+                _ => (
+                    0.47 * body * (-t / 0.027).exp()
+                        + 0.78 * band * (tail * 0.64 + 0.47 * pulse(0.042, 0.016)),
+                    0.43,
+                ),
+            }
+        } else if clap {
+            let env = match flavor {
+                27 => pulse(0., 0.006) + 0.60 * pulse(0.011, 0.010),
+                28 => 0.76 * pulse(0., 0.016) + 0.45 * pulse(0.024, 0.026),
+                _ => pulse(0., 0.009) + 0.71 * pulse(0.018, 0.011) + 0.47 * pulse(0.061, 0.008),
+            };
+            (band * 0.72 * (env + tail * 0.24), 0.44)
+        } else if cymbal {
+            let metallic = (TAU * (1500. + f32::from(pitch) * 6.) * t).sin() * 0.61
+                + (TAU * 2327. * t).sin() * 0.39;
+            let gate = if flavor == 29 {
+                0.56 * tail + 0.38 * pulse(0.035, 0.012)
+            } else {
+                tail
+            };
+            let blend = if flavor == 28 { 0.027 } else { 0.055 };
+            (
+                ((1. - blend) * band + blend * metallic) * gate,
+                if open { 0.22 } else { 0.24 },
+            )
+        } else {
+            let env = if flavor == 29 && !drum {
+                0.70 * pulse(0., 0.017) + 0.56 * pulse(0.038, 0.020)
+            } else {
+                tail
+            };
+            (
+                (0.79 * body + 0.25 * band) * env,
+                if drum { 0.38 } else { 0.24 },
+            )
+        };
+        let attack = (t / attack_secs).min(1.);
+        let release = ((duration - t) / 0.012).clamp(0., 1.);
+        out.push(gain * attack * release * signal);
+    }
+    out
+}
+
+pub fn kit_sample(kit: Kit, pitch: u8) -> &'static [f32] {
+    static WAVES: [OnceLock<[Vec<f32>; 47]>; KITS.len()] = [const { OnceLock::new() }; KITS.len()];
     if !(35..=81).contains(&pitch) {
         return &[];
     }
-    &WAVES.get_or_init(|| std::array::from_fn(|n| wave(n as u8 + 35)))[usize::from(pitch - 35)]
+    let Some(index) = KITS.iter().position(|known| known.program == kit.program) else {
+        return &[];
+    };
+    &WAVES[index].get_or_init(|| {
+        std::array::from_fn(|n| {
+            let key = n as u8 + 35;
+            if index == 0 {
+                wave(key)
+            } else {
+                variant(KITS[index], key)
+            }
+        })
+    })[usize::from(pitch - 35)]
+}
+
+#[cfg(test)]
+fn sample(pitch: u8) -> &'static [f32] {
+    kit_sample(KITS[0], pitch)
 }
 
 #[cfg(test)]
@@ -111,5 +324,47 @@ mod tests {
         assert_ne!(sample(38), sample(39));
         assert_eq!(sample(36), wave(36));
         assert!(sample(34).is_empty());
+    }
+
+    #[test]
+    fn extended_kits_are_independent_and_complete() {
+        for (i, kit) in KITS.into_iter().enumerate() {
+            assert_eq!(
+                for_instrument(&crate::model::Instrument {
+                    drums: true,
+                    bank: BANK,
+                    program: kit.program
+                }),
+                Some(kit)
+            );
+            for pitch in 35..=81 {
+                let pcm = kit_sample(kit, pitch);
+                assert_eq!(pcm[0], 0.);
+                assert!(pcm.last().unwrap().abs() < 0.001);
+                assert!(pcm.iter().all(|x| x.is_finite() && x.abs() < 0.80));
+                assert!(pcm.iter().any(|x| x.abs() > 0.015), "{kit:?}: {pitch}");
+                for previous in &KITS[..i] {
+                    assert_ne!(pcm, kit_sample(*previous, pitch), "{kit:?}: {pitch}");
+                }
+            }
+            assert!(kit_sample(kit, 46).len() > kit_sample(kit, 42).len() * 2);
+            assert!(kit_sample(kit, 82).is_empty());
+        }
+        assert_eq!(
+            for_instrument(&crate::model::Instrument {
+                drums: true,
+                bank: 0,
+                program: 25
+            }),
+            None
+        );
+        assert_eq!(
+            for_instrument(&crate::model::Instrument {
+                drums: false,
+                bank: BANK,
+                program: 27
+            }),
+            None
+        );
     }
 }

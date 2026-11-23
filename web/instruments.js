@@ -2,7 +2,7 @@
 const controllerLabels={1:'调制',7:'MIDI 音量',10:'MIDI 声像',11:'表情',64:'踏板',91:'混响发送',93:'合唱发送'};
 let instrumentCatalog=null,instrumentLane='velocity',controllerDrag=null,lastInstrumentTrack=null;
 const warmDrumBank=129,warmDrumProgram=25;
-const isBuiltInDrum=i=>i?.drums&&i.bank===warmDrumBank&&i.program===warmDrumProgram;
+const isBuiltInDrum=i=>i?.drums&&i.bank===warmDrumBank;
 const percussionLabel=(pitch,track)=>isBuiltInDrum(track.instrument)&&pitch>=75&&pitch<=77?['电子短击','电子短击 · 中','电子短击 · 高'][pitch-75]:instrumentCatalog?.percussion_notes.find(x=>x.pitch===pitch)?.name;
 const presetSettings=document.createElement('div');presetSettings.className='instrument-settings';presetSettings.innerHTML='<label>类型<select id="trackKind" aria-label="音轨类型"><option value="vocal">歌声</option><option value="instrument">乐器</option><option value="audio">音频</option></select></label><label id="instrumentPresetLabel">音色<select id="instrumentPreset" aria-label="乐器音色"></select></label>';$('singer').closest('label').before(presetSettings);
 const laneSelect=document.createElement('select');laneSelect.id='instrumentLane';laneSelect.setAttribute('aria-label','乐器表情通道');laneSelect.innerHTML='<option value="velocity">力度</option>'+[64,11,1,7,10,91,93].map(c=>`<option value="cc${c}">${controllerLabels[c]}</option>`).join('');laneSelect.title='拖动绘制 · Alt 拖动擦除控制点';document.querySelector('.expression-head').append(laneSelect);laneSelect.hidden=true;

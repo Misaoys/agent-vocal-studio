@@ -1411,9 +1411,12 @@ fn render_inner(
         } else {
             None
         };
-        let builtin = t.instrument.as_ref().is_some_and(crate::drum_kit::is_kit);
-        let (kind, backend) = if builtin {
-            ("instrument", crate::drum_kit::FINGERPRINT)
+        let builtin = t
+            .instrument
+            .as_ref()
+            .and_then(crate::drum_kit::for_instrument);
+        let (kind, backend) = if let Some(kit) = builtin {
+            ("instrument", kit.fingerprint)
         } else if t.instrument.is_some() {
             ("instrument", crate::instruments::FONT_SHA)
         } else if t.is_audio() {
@@ -1461,14 +1464,16 @@ fn render_inner(
         } else if kind == "guide" {
             voice_sources.insert(t.id.clone(), json!({"engine":"guide"}));
         }
-        if !audition && credited && builtin {
-            credits.push(crate::drum_kit::NAME.to_string());
-        } else if !audition && credited && t.instrument.is_some() {
-            credits.push(crate::instruments::FONT_NAME.to_string());
-            fs::copy(
-                root.join("runtime/soundfonts/LICENSE.txt"),
-                dir.join("乐器音源许可.txt"),
-            )?;
+        if !audition && credited {
+            if let Some(kit) = builtin {
+                credits.push(kit.name.to_string());
+            } else if t.instrument.is_some() {
+                credits.push(crate::instruments::FONT_NAME.to_string());
+                fs::copy(
+                    root.join("runtime/soundfonts/LICENSE.txt"),
+                    dir.join("乐器音源许可.txt"),
+                )?;
+            }
         }
         let source = Source::new(p, t, kind, backend)?;
         if monitor_tracks.is_some() && source.open(root, &p.id, len).is_ok() {
@@ -2030,34 +2035,65 @@ mod output_tests {
             )?);
         }
         let id = track.id.clone();
-        let project = store.create("Warm Drum isolated fixture", 158., [3, 4], vec![track])?;
-        let control = Control::ephemeral("warmdrums", &project.id, project.revision, "project");
-        let result = render(&root, &project, "warmdrums", "project", false, &control)?;
-        assert!(result["instrument_bank_sha256"].is_null());
-        assert_eq!(result["credits"][0], crate::drum_kit::NAME);
-        let dir = crate::audition::export_directory(&root, "warmdrums")?;
-        assert!(!dir.join("乐器音源许可.txt").exists());
-        let output = SavedOutput::Track(id);
-        let names =
-            crate::audition::output_files(&project, &result, Some(std::slice::from_ref(&output)))?;
-        let range = [0, 45_000];
-        let exported = crate::audition::read_output(&dir, &names, range)?;
-        let audition = audition_mix(
-            &root,
-            &project,
-            "project",
-            range[0],
-            range[1],
-            Some(&output),
-            &control,
-        )?;
-        assert!(exported.iter().flatten().any(|sample| sample.abs() > 0.05));
-        assert_eq!(exported.len(), audition.len());
-        assert!(exported
-            .iter()
-            .flatten()
-            .zip(audition.iter().flatten())
-            .all(|(x, y)| (x * 8_388_607.).round() == (y * 8_388_607.).round()));
+        let base = store.create("Drum kits isolated fixture", 158., [3, 4], vec![track])?;
+        let notes = serde_json::to_value(&base.tracks[0].notes)?;
+        let mut rendered = Vec::new();
+        for kit in crate::drum_kit::KITS {
+            let project = Store::preview_edit(
+                &base,
+                &json!([
+                    {"op":"update_track","track_id":id,"values":{
+                        "instrument":{"bank":crate::drum_kit::BANK,"program":kit.program,"drums":true}
+                    }}
+                ]),
+            )?;
+            assert_eq!(serde_json::to_value(&project.tracks[0].notes)?, notes);
+            let job = format!("drum_{}", kit.program);
+            let control = Control::ephemeral(&job, &project.id, project.revision, "project");
+            let result = render(&root, &project, &job, "project", false, &control)?;
+            assert!(result["instrument_bank_sha256"].is_null());
+            assert_eq!(result["credits"][0], kit.name);
+            let dir = crate::audition::export_directory(&root, &job)?;
+            assert!(!dir.join("乐器音源许可.txt").exists());
+            let output = SavedOutput::Track(id.clone());
+            let names = crate::audition::output_files(
+                &project,
+                &result,
+                Some(std::slice::from_ref(&output)),
+            )?;
+            let range = [0, 45_000];
+            let exported = crate::audition::read_output(&dir, &names, range)?;
+            let audition = audition_mix(
+                &root,
+                &project,
+                "project",
+                range[0],
+                range[1],
+                Some(&output),
+                &control,
+            )?;
+            assert!(
+                exported.iter().flatten().any(|sample| sample.abs() > 0.05),
+                "{}",
+                kit.name
+            );
+            assert_eq!(exported.len(), audition.len());
+            assert!(
+                exported
+                    .iter()
+                    .flatten()
+                    .zip(audition.iter().flatten())
+                    .all(|(x, y)| (x * 8_388_607.).round() == (y * 8_388_607.).round()),
+                "{}",
+                kit.name
+            );
+            assert!(
+                rendered.iter().all(|previous| previous != &exported),
+                "{}",
+                kit.name
+            );
+            rendered.push(exported);
+        }
         fs::remove_dir_all(root)?;
         Ok(())
     }

@@ -672,12 +672,24 @@ impl Project {
                 ensure!(
                     i.program <= 127
                         && if i.drums {
-                            [0, 128].contains(&i.bank)
+                            [0, 128].contains(&i.bank) || crate::drum_kit::is_kit(i)
                         } else {
                             i.bank <= 127
                         },
                     "Invalid instrument bank/program"
                 );
+                if crate::drum_kit::is_kit(i) {
+                    ensure!(
+                        t.notes.iter().all(|n| (35..=81).contains(&n.pitch)),
+                        "Built-in drum kits use GM notes 35–81"
+                    );
+                    ensure!(
+                        t.controllers
+                            .iter()
+                            .all(|c| matches!(c.controller, 7 | 10 | 11)),
+                        "Built-in drum kits support MIDI volume, pan and expression only"
+                    );
+                }
             }
             ensure!(
                 t.controllers.is_empty() || t.instrument.is_some(),

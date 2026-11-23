@@ -1411,7 +1411,13 @@ fn render_inner(
         } else {
             None
         };
-        let (kind, backend) = if t.instrument.is_some() {
+        let builtin = t
+            .instrument
+            .as_ref()
+            .and_then(crate::drum_kit::for_instrument);
+        let (kind, backend) = if let Some(kit) = builtin {
+            ("instrument", kit.fingerprint)
+        } else if t.instrument.is_some() {
             ("instrument", crate::instruments::FONT_SHA)
         } else if t.is_audio() {
             ("audio", "")
@@ -1458,12 +1464,16 @@ fn render_inner(
         } else if kind == "guide" {
             voice_sources.insert(t.id.clone(), json!({"engine":"guide"}));
         }
-        if !audition && credited && t.instrument.is_some() {
-            credits.push(crate::instruments::FONT_NAME.to_string());
-            fs::copy(
-                root.join("runtime/soundfonts/LICENSE.txt"),
-                dir.join("乐器音源许可.txt"),
-            )?;
+        if !audition && credited {
+            if let Some(kit) = builtin {
+                credits.push(kit.name.to_string());
+            } else if t.instrument.is_some() {
+                credits.push(crate::instruments::FONT_NAME.to_string());
+                fs::copy(
+                    root.join("runtime/soundfonts/LICENSE.txt"),
+                    dir.join("乐器音源许可.txt"),
+                )?;
+            }
         }
         let source = Source::new(p, t, kind, backend)?;
         if monitor_tracks.is_some() && source.open(root, &p.id, len).is_ok() {
@@ -1901,7 +1911,7 @@ fn render_inner(
         format!("{}\n{}\n{}\n乐器音源：https://github.com/mrbumpy409/GeneralUser-GS\n合成与采样乐器不标为真人录制。",credits.join("\n"),if voice_sources.values().any(|source|source["engine"]=="guide"){"歌声导唱使用内置振荡器，不合成歌词。"}else{""},
             if voice_sources.values().any(|source|source["engine"]=="voicevox") {"歌声音源：https://voicevox.hiroshiba.jp/term/"} else {""}),
     )?;
-    let result = json!({"job_id":job,"engine":mode,"project_id":p.id,"revision":p.revision,"sample_rate":48000,"channels":2,"seconds":len as f64/48000.,"tail_seconds":p.tail_seconds,"timing_schema":p.format,"tempo_points":p.tempo_map.len(),"meter_points":p.meter_map.len(),"instrument_bank_sha256":if p.tracks.iter().any(|t|t.instrument.is_some()){Some(crate::instruments::FONT_SHA)}else{None},"peak_dbfs":20.*(peak*scale).log10(),"rms_dbfs":20.*(sumsq/(len*2) as f64).sqrt().log10(),"attenuation":scale,"loudness":loudness,"track_effects":processed_tracks,"aux_returns":routed.returns,"group_stems":routed.groups,"master_limiter":master_report,"mix_url":format!("/exports/{job}/试听混音.wav"),"directory":final_dir,"stems":stems.iter().map(|x|x.0.clone()).collect::<Vec<_>>(),"credits":credits,"voice_sources":voice_sources,"audio_verified_non_silent":non_silent,"musical_quality_approved":false,"preview_sources":preview_sources,"reused_source_track_ids":reused,"reused_preview_voice_track_ids":reused_preview_voice,"prepared_for_monitor":monitor,"monitor_unavailable":monitor_unavailable});
+    let result = json!({"job_id":job,"engine":mode,"project_id":p.id,"revision":p.revision,"sample_rate":48000,"channels":2,"seconds":len as f64/48000.,"tail_seconds":p.tail_seconds,"timing_schema":p.format,"tempo_points":p.tempo_map.len(),"meter_points":p.meter_map.len(),"instrument_bank_sha256":if p.tracks.iter().any(|t|t.instrument.as_ref().is_some_and(|i| !crate::drum_kit::is_kit(i))){Some(crate::instruments::FONT_SHA)}else{None},"peak_dbfs":20.*(peak*scale).log10(),"rms_dbfs":20.*(sumsq/(len*2) as f64).sqrt().log10(),"attenuation":scale,"loudness":loudness,"track_effects":processed_tracks,"aux_returns":routed.returns,"group_stems":routed.groups,"master_limiter":master_report,"mix_url":format!("/exports/{job}/试听混音.wav"),"directory":final_dir,"stems":stems.iter().map(|x|x.0.clone()).collect::<Vec<_>>(),"credits":credits,"voice_sources":voice_sources,"audio_verified_non_silent":non_silent,"musical_quality_approved":false,"preview_sources":preview_sources,"reused_source_track_ids":reused,"reused_preview_voice_track_ids":reused_preview_voice,"prepared_for_monitor":monitor,"monitor_unavailable":monitor_unavailable});
     control.commit()?;
     fs::write(
         dir.join("渲染报告.json"),
@@ -1997,6 +2007,93 @@ mod output_tests {
             settings.slots[2].start - settings.pad + settings.origin,
             (clock.seconds(8.) * 93.75).round() as usize
         );
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn built_in_drums_use_identical_audition_and_export_without_soundfont() -> Result<()> {
+        let root = std::env::temp_dir().join(uid("avs_warm_kit_export"));
+        let store = Store::new(root.clone())?;
+        let mut track = Track::new("Warm Drum Test");
+        track.instrument = Some(crate::model::Instrument {
+            bank: crate::drum_kit::BANK,
+            program: crate::drum_kit::PROGRAM,
+            drums: true,
+        });
+        for (start, pitch, velocity) in [
+            (0., 36, 109),
+            (0.25, 42, 59),
+            (0.75, 46, 72),
+            (1., 38, 91),
+            (1., 42, 63),
+            (1.75, 75, 66),
+            (2., 39, 82),
+        ] {
+            track.notes.push(crate::model::Note::from_value(
+                &json!({"start":start,"duration":0.2,"pitch":pitch,"velocity":velocity}),
+            )?);
+        }
+        let id = track.id.clone();
+        let base = store.create("Drum kits isolated fixture", 158., [3, 4], vec![track])?;
+        let notes = serde_json::to_value(&base.tracks[0].notes)?;
+        let mut rendered = Vec::new();
+        for kit in crate::drum_kit::KITS {
+            let project = Store::preview_edit(
+                &base,
+                &json!([
+                    {"op":"update_track","track_id":id,"values":{
+                        "instrument":{"bank":crate::drum_kit::BANK,"program":kit.program,"drums":true}
+                    }}
+                ]),
+            )?;
+            assert_eq!(serde_json::to_value(&project.tracks[0].notes)?, notes);
+            let job = format!("drum_{}", kit.program);
+            let control = Control::ephemeral(&job, &project.id, project.revision, "project");
+            let result = render(&root, &project, &job, "project", false, &control)?;
+            assert!(result["instrument_bank_sha256"].is_null());
+            assert_eq!(result["credits"][0], kit.name);
+            let dir = crate::audition::export_directory(&root, &job)?;
+            assert!(!dir.join("乐器音源许可.txt").exists());
+            let output = SavedOutput::Track(id.clone());
+            let names = crate::audition::output_files(
+                &project,
+                &result,
+                Some(std::slice::from_ref(&output)),
+            )?;
+            let range = [0, 45_000];
+            let exported = crate::audition::read_output(&dir, &names, range)?;
+            let audition = audition_mix(
+                &root,
+                &project,
+                "project",
+                range[0],
+                range[1],
+                Some(&output),
+                &control,
+            )?;
+            assert!(
+                exported.iter().flatten().any(|sample| sample.abs() > 0.05),
+                "{}",
+                kit.name
+            );
+            assert_eq!(exported.len(), audition.len());
+            assert!(
+                exported
+                    .iter()
+                    .flatten()
+                    .zip(audition.iter().flatten())
+                    .all(|(x, y)| (x * 8_388_607.).round() == (y * 8_388_607.).round()),
+                "{}",
+                kit.name
+            );
+            assert!(
+                rendered.iter().all(|previous| previous != &exported),
+                "{}",
+                kit.name
+            );
+            rendered.push(exported);
+        }
         fs::remove_dir_all(root)?;
         Ok(())
     }

@@ -411,7 +411,10 @@ pub fn export(p: &Project) -> Result<Vec<u8>> {
                 TrackEventKind::Midi {
                     channel,
                     message: MidiMessage::ProgramChange {
-                        program: u7::new(i.program),
+                        program: u7::new(
+                            crate::drum_kit::for_instrument(i)
+                                .map_or(i.program, |kit| kit.midi_fallback),
+                        ),
                     },
                 },
             ));

@@ -1,4 +1,4 @@
-use crate::model::*;
+use crate::{drum_kit, model::*};
 use anyhow::{ensure, Context, Result};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use serde_json::{json, Value};
@@ -54,19 +54,22 @@ fn family(program: i32, drums: bool) -> &'static str {
     families[(program as usize / 8).min(15)]
 }
 pub fn catalog(root: &Path) -> Result<Value> {
-    let font = load(root)?;
-    let mut presets=font.get_presets().iter().map(|p|{let bank=p.get_bank_number();let program=p.get_patch_number();let drums=bank==128;json!({"name":p.get_name(),"bank":bank,"program":program,"drums":drums,"family":family(program,drums)})}).collect::<Vec<_>>();
+    let font = load(root);
+    let mut presets=font.as_ref().ok().into_iter().flat_map(|font| font.get_presets().iter()).map(|p|{let bank=p.get_bank_number();let program=p.get_patch_number();let drums=bank==128;json!({"name":p.get_name(),"bank":bank,"program":program,"drums":drums,"family":family(program,drums)})}).collect::<Vec<_>>();
+    presets.push(json!({"name":drum_kit::NAME,"bank":drum_kit::BANK,"program":drum_kit::PROGRAM,"drums":true,"family":"鼓组","built_in":true,"supported_controllers":[7,10,11]}));
     presets.sort_by_key(|p| (p["bank"].as_i64(), p["program"].as_i64()));
     Ok(
-        json!({"engine":"rustysynth","native_language":"Rust","sample_bank":FONT_NAME,"sha256":FONT_SHA,"installed":true,"presets":presets,"supported_controllers":[1,7,10,11,64,91,93],"controller_defaults":{"1":0,"7":100,"10":64,"11":127,"64":0,"91":40,"93":0},"controller_names":{"1":"颤音/调制","7":"MIDI 音量","10":"MIDI 声像","11":"表情","64":"延音踏板","91":"混响发送","93":"合唱发送"},"percussion_notes":drums(),"limits":["每音音高曲线暂属歌声；乐器使用已支持的轨道 MIDI 控制器","同音高重叠重击使用另一音轨","MIDI 渐变速度使用离散事件；原生工程保留精确曲线"],"source":"https://github.com/mrbumpy409/GeneralUser-GS"}),
+        json!({"engine":"rustysynth","native_language":"Rust","sample_bank":FONT_NAME,"sha256":FONT_SHA,"installed":font.is_ok(),"soundfont_error":font.err().map(|e| format!("{e:#}")),"presets":presets,"supported_controllers":[1,7,10,11,64,91,93],"controller_defaults":{"1":0,"7":100,"10":64,"11":127,"64":0,"91":40,"93":0},"controller_names":{"1":"颤音/调制","7":"MIDI 音量","10":"MIDI 声像","11":"表情","64":"延音踏板","91":"混响发送","93":"合唱发送"},"percussion_notes":drums(),"limits":["每音音高曲线暂属歌声；乐器使用已支持的轨道 MIDI 控制器","同音高重叠重击使用另一音轨","MIDI 渐变速度使用离散事件；原生工程保留精确曲线"],"source":"https://github.com/mrbumpy409/GeneralUser-GS"}),
     )
 }
 pub fn status(root: &Path) -> Value {
     match load(root) {
         Ok(font) => {
-            json!({"installed":true,"sample_bank":FONT_NAME,"preset_count":font.get_presets().len(),"sha256":FONT_SHA})
+            json!({"installed":true,"built_in_drum_kit":drum_kit::NAME,"sample_bank":FONT_NAME,"preset_count":font.get_presets().len(),"sha256":FONT_SHA})
         }
-        Err(e) => json!({"installed":false,"error":format!("{e:#}")}),
+        Err(e) => {
+            json!({"installed":false,"built_in_drum_kit":drum_kit::NAME,"error":format!("{e:#}")})
+        }
     }
 }
 pub fn drums() -> Value {
@@ -173,6 +176,84 @@ fn events(p: &Project, t: &Track) -> Vec<Event> {
     events.sort_by_key(|e| (e.sample, e.order));
     events
 }
+fn render_builtin(
+    p: &Project,
+    t: &Track,
+    len: usize,
+    control: &crate::jobs::Control,
+    base: f64,
+    span: f64,
+) -> Result<Vec<[f32; 2]>> {
+    let events = events(p, t);
+    // Precompute the next pedal / closed hat position to choke open hats.
+    let mut chokes = vec![len; events.len()];
+    let mut next = len;
+    for (i, event) in events.iter().enumerate().rev() {
+        chokes[i] = next;
+        if event.message == 0x90 && event.data2 != 0 && matches!(event.data1, 42 | 44) {
+            next = event.sample;
+        }
+    }
+    let mut out = vec![[0.; 2]; len];
+    for (i, event) in events.iter().enumerate() {
+        if i % 64 == 0 {
+            control.progress(
+                "instrument",
+                base + span * event.sample.min(len) as f64 / len.max(1) as f64,
+                Some((&t.id, &t.name)),
+            )?;
+        }
+        if event.message != 0x90 || event.data2 == 0 || event.sample >= len {
+            continue;
+        }
+        let pcm = drum_kit::sample(event.data1);
+        let hit_gain = 0.78 * (f32::from(event.data2) / 127.).powf(1.45);
+        let end = (event.sample + pcm.len()).min(len);
+        let choke = chokes[i].max(event.sample);
+        let fade = drum_kit::RATE * 6 / 1000;
+        let stop = if event.data1 == 46 {
+            end.min(choke + fade)
+        } else {
+            end
+        };
+        for (frame, (out, sample)) in out[event.sample..stop].iter_mut().zip(pcm).enumerate() {
+            let fade_gain = if event.data1 == 46 && event.sample + frame >= choke {
+                1. - (event.sample + frame - choke) as f32 / fade as f32
+            } else {
+                1.
+            };
+            out[0] += hit_gain * fade_gain * sample;
+        }
+    }
+    let (mut volume, mut pan, mut expression) = (100, 64, 127);
+    let mut events = events.iter().filter(|e| e.message == 0xb0).peekable();
+    let mut gains = [0.70, 0.70];
+    let mut target = gains;
+    for (frame, channels) in out.iter_mut().enumerate() {
+        if frame % 8192 == 0 {
+            control.check()?;
+        }
+        while events.peek().is_some_and(|e| e.sample <= frame) {
+            let e = events.next().unwrap();
+            match e.data1 {
+                7 => volume = e.data2,
+                10 => pan = e.data2,
+                11 => expression = e.data2,
+                _ => continue,
+            }
+            let angle = (f32::from(pan) / 127.) * std::f32::consts::FRAC_PI_2;
+            let level = f32::from(volume) / 100. * f32::from(expression) / 127.;
+            target = [level * angle.cos(), level * angle.sin()];
+        }
+        for channel in 0..2 {
+            gains[channel] += (target[channel] - gains[channel]) * 0.018;
+        }
+        let mono = channels[0];
+        *channels = [gains[0] * mono, gains[1] * mono];
+    }
+    Ok(out)
+}
+
 pub fn render(
     root: &Path,
     p: &Project,
@@ -185,7 +266,10 @@ pub fn render(
     let instrument = t
         .instrument
         .as_ref()
-        .context("Track is not a sampled instrument")?;
+        .context("Track is not an instrument")?;
+    if drum_kit::is_kit(instrument) {
+        return render_builtin(p, t, len, control, base, span);
+    }
     let font = load(root)?;
     let bank = if instrument.drums {
         128
@@ -264,6 +348,39 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn built_in_drums_render_at_tempo_without_soundfont_and_respect_velocity() -> Result<()> {
+        let mut track = Track::new("Drum test");
+        track.instrument = Some(Instrument {
+            bank: drum_kit::BANK,
+            program: drum_kit::PROGRAM,
+            drums: true,
+        });
+        track.notes = vec![
+            Note::from_value(&json!({"start":1,"duration":0.25,"pitch":36,"velocity":45}))?,
+            Note::from_value(&json!({"start":2,"duration":0.25,"pitch":36,"velocity":110}))?,
+        ];
+        let root = std::env::temp_dir().join(uid("inst_built_in"));
+        let store = Store::new(root.clone())?;
+        let project = store.create("Original warm drum kit", 120., [4, 4], vec![track])?;
+        let ctl = crate::jobs::Control::ephemeral("drums", &project.id, project.revision, "guide");
+        let frames = render(&root, &project, &project.tracks[0], 72_000, &ctl, 0., 1.)?;
+        let peak = |first, end| {
+            frames[first..end]
+                .iter()
+                .map(|s: &[f32; 2]| s[0].abs())
+                .fold(0.0_f32, f32::max)
+        };
+        assert_eq!(peak(0, 24_000), 0.);
+        assert!(peak(24_000, 45_000) > 0.01);
+        assert!(peak(48_000, 69_000) > 2. * peak(24_000, 45_000));
+        let options = catalog(&root)?;
+        assert_eq!(options["installed"], false);
+        assert_eq!(options["presets"][0]["bank"], drum_kit::BANK);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
     #[test]
     fn instrument_events_are_timed_and_release_before_retrigger() -> Result<()> {
         let mut t = Track::new("钢琴");

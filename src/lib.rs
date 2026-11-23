@@ -11,6 +11,7 @@ mod clips;
 #[cfg(windows)]
 mod desktop;
 mod draft_changes;
+mod drum_kit;
 mod effects;
 mod engine;
 mod exchange;
